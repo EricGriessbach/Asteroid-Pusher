@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asteroid Pusher</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Asteroid Pusher</h1>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui-controls">
+            <button id="resetButton">Reset Trial</button>
+            <p id="message"></p>
+        </div>
+        <div id="gravity-controls">
+            <label for="gravitySlider">Gravity:</label>
+            <!-- Updated Slider Parameters -->
+            <input type="range" id="gravitySlider" min="0" max="10" step="0.5" value="5">
+            <span id="gravityValue">5</span>
+        </div>
+    </div>
+
+    <!-- Performance Visualization Section -->
+    <div id="performance-section">
+        <h2>Performance Map (Kick Angle vs. Velocity)</h2>
+        <p class="perf-legend">Color indicates closest approach to target (Green = Close, Red = Far)</p>
+        <canvas id="performanceCanvas"></canvas>
+        <div id="perf-status">Generating performance map...</div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

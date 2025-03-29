@@ -1,0 +1,154 @@
+body {
+    margin: 0;
+    padding: 20px;
+    background-color: #000;
+    color: #eee;
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+h1 {
+    color: #0f8;
+    text-shadow: 0 0 5px #0f8;
+    margin-bottom: 15px;
+}
+
+#game-container {
+    position: relative;
+    border: 1px solid #555;
+    margin-bottom: 20px;
+    /* --- Adjusted size to match new canvas dimensions --- */
+    width: 1400px; /* Match config.canvasWidth */
+    height: 900px; /* Match config.canvasHeight */
+    cursor: default; /* Default cursor for the game area */
+}
+
+#gameCanvas {
+    display: block;
+    background-color: #000;
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* Cursor will be changed dynamically via JS for interactions */
+}
+
+#ui-controls {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 5px 10px;
+    border-radius: 5px;
+    z-index: 10;
+}
+
+#resetButton {
+    padding: 8px 15px;
+    font-size: 1em;
+    cursor: pointer;
+    background-color: #448;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    transition: background-color 0.2s ease;
+}
+
+#resetButton:hover {
+    background-color: #66a;
+}
+
+#resetButton:disabled {
+    background-color: #333;
+    cursor: not-allowed;
+}
+
+#message {
+    font-size: 1.1em;
+    font-weight: bold;
+    margin: 0;
+}
+
+.success {
+    color: #0f8;
+    text-shadow: 0 0 5px #0f8;
+}
+
+.failure {
+    color: #f44;
+    text-shadow: 0 0 5px #f44;
+}
+
+#gravity-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 8px 12px;
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px;
+    z-index: 10;
+    color: #eee;
+}
+
+#gravity-controls label {
+    font-size: 0.9em;
+}
+
+#gravitySlider {
+    cursor: pointer;
+    width: 120px;
+}
+
+#gravityValue {
+    font-weight: bold;
+    min-width: 30px;
+    text-align: right;
+}
+
+/* Performance Visualization Styles */
+#performance-section {
+    margin-top: 20px;
+    text-align: center;
+    /* --- Adjusted width --- */
+    width: 1400px; /* Match game canvas width */
+}
+
+#performance-section h2 {
+    margin-bottom: 5px;
+    color: #ccc;
+}
+
+.perf-legend {
+    font-size: 0.9em;
+    color: #aaa;
+    margin-bottom: 10px;
+}
+
+#performanceCanvas {
+    border: 1px solid #444;
+    background-color: #111;
+    /* --- Adjusted size --- */
+    width: 1400px; /* Match config.canvasWidth */
+    height: 200px; /* Keep height fixed */
+    display: block;
+    margin: 0 auto;
+    cursor: default;
+}
+
+#perf-status {
+    margin-top: 10px;
+    color: #ccc;
+    font-style: italic;
+    min-height: 1.2em;
+    font-size: 0.9em;
+}
