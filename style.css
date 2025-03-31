@@ -33,6 +33,7 @@ h1 {
     position: absolute;
     top: 0;
     left: 0;
+    z-index: 1;
     /* Cursor will be changed dynamically via JS for interactions */
 }
 
@@ -151,4 +152,46 @@ h1 {
     font-style: italic;
     min-height: 1.2em;
     font-size: 0.9em;
+}
+
+#startButton {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 20px 40px;
+    font-size: 1.5em;
+    font-weight: bold;
+    cursor: pointer;
+    background-color: #0f8; /* Bright green like the title */
+    color: #000;
+    border: none;
+    border-radius: 5px;
+    text-shadow: none;
+    box-shadow: 0 0 15px #0f8;
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+    z-index: 20; /* Ensure it's above the canvas */
+}
+
+#startButton:hover {
+    background-color: #3ff;
+    box-shadow: 0 0 25px #3ff;
+}
+
+/* --- Optional: Style to slightly dim the background before start --- */
+#game-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent black */
+    z-index: 15; /* Below start button, above canvas */
+    pointer-events: none; /* Don't intercept clicks */
+    display: block; /* Initially show the dimming overlay */
+}
+
+#game-container.game-started::before {
+    display: none; /* Hide overlay when game starts */
 }
