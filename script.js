@@ -1,6 +1,11 @@
 // --- Canvas and UI Elements ---
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const startButton = document.getElementById('startButton'); // Get start button
+const gameContainer = document.getElementById('game-container'); // Get container
+const uiControls = document.getElementById('ui-controls');
+const gravityControls = document.getElementById('gravity-controls');
+const performanceSection = document.getElementById('performance-section');
 const resetButton = document.getElementById('resetButton');
 const messageElement = document.getElementById('message');
 const gravitySlider = document.getElementById('gravitySlider');
@@ -9,6 +14,16 @@ const gravityValueSpan = document.getElementById('gravityValue');
 const perfCanvas = document.getElementById('performanceCanvas');
 const perfCtx = perfCanvas.getContext('2d');
 const perfStatusElement = document.getElementById('perf-status');
+const soundAssetsPath = 'assets/';
+const sounds = {};
+
+// List of sound names (without extension)
+const soundNames = [
+    'Start_3.mp3',
+    'EndSuccess_1.wav',
+    'EndFail_1.wav',
+    'EndOutside.mp3'
+];
 
 // --- Configuration ---
 let config = {
@@ -36,7 +51,7 @@ let config = {
     // --- End Game Config ---
     successThreshold: 0,
     timeStep: 1,
-    autoResetDelay: 1000,
+    autoResetDelay: 1500,
     // --- Performance Map ---
     perfMapAngles: 72,
     perfMapVelocities: 20,
@@ -49,6 +64,8 @@ let config = {
     perfMapMarkerRadius: 3,
     // --- Off-Screen Buffer for Simulation ---
     simOffScreenBuffer: 50, // How far off screen before simulation stops
+    cursorResetBuffer: 10 // Extra pixels distance needed to reset
+
 };
 
 // --- Game State ---
@@ -59,10 +76,11 @@ let asteroid;
 let planets = [];
 let targetPlanet;
 let stars = [];
-let canKick = true;
-let gameActive = true;
+let canKick = false; // Start as false initially
+let gameActive = false; // Start as inactive
 let animationFrameId = null;
 let resetTimeoutId = null;
+let needsCursorReset = false; // NEW: Flag for cursor reset requirement
 
 // Performance Map State
 let performanceData = null;
@@ -164,6 +182,47 @@ window.addEventListener('keydown', (event) => {
     }
 });
 
+function preloadSounds() {
+    console.log("Preloading sounds...");
+    soundNames.forEach(name => {
+        const audio = new Audio();
+        audio.src = `${soundAssetsPath}${name}`;
+        // Optional: you could add event listeners here to track loading progress
+        // e.g., audio.addEventListener('canplaythrough', () => console.log(`${name} ready`));
+        audio.addEventListener('error', (e) => {
+            console.error(`Error loading sound "${name}":`, e);
+        });
+        // Browsers usually preload sufficiently when src is set, but load() can be explicit
+        // audio.load(); // Often not strictly necessary, but doesn't hurt
+        
+        // Store without extension (remove last 4 characters)
+        const nameWithoutExt = name.slice(0, -4);
+        sounds[nameWithoutExt] = audio;
+    });
+    console.log("Sound preloading initiated.");
+}
+
+/**
+ * Plays a preloaded sound file.
+ * @param {string} soundName - The base name of the sound (e.g., 'Start_3')
+ */
+function playSound(soundName) {
+    const audio = sounds[soundName];
+    if (audio) {
+        // Setting currentTime ensures the sound plays from the beginning
+        // even if triggered again quickly before finishing.
+        audio.currentTime = 0;
+        audio.play().catch(error => {
+            // Autoplay restrictions might prevent playing until first user interaction.
+            console.warn(`Could not play sound "${soundName}":`, error);
+            // You might want to buffer interactions until the user clicks something
+            // if this becomes an issue on first load.
+        });
+    } else {
+        console.error(`Sound "${soundName}" not found or not preloaded.`);
+    }
+}
+
 // --- Game Logic ---
 
 function setup() {
@@ -172,8 +231,8 @@ function setup() {
 
     canvas.width = config.canvasWidth;
     canvas.height = config.canvasHeight;
-    perfCanvas.width = config.canvasWidth; // Match width for consistency
-    perfCanvas.height = 200; // Keep fixed height
+    perfCanvas.width = config.canvasWidth; 
+    perfCanvas.height = 200; 
 
     stars = [];
     for (let i = 0; i < config.starCount; i++) { stars.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, radius: Math.random() * 1.5, alpha: Math.random() * 0.5 + 0.2 }); }
@@ -213,15 +272,26 @@ function setup() {
         console.error("CRITICAL: No planets defined or created!");
         // Handle this critical error state appropriately
     }
-    canKick = true;
-    gameActive = true;
+
+    // --- State Reset ---
+    gameActive = true; // Game becomes active during setup
     asteroid.isMoving = false; asteroid.vx = 0; asteroid.vy = 0; asteroid.trail = [];
-    messageElement.textContent = 'Move cursor to kick. Click/Drag planets to move, Wheel over planets to resize.';
-    messageElement.className = '';
-    resetButton.disabled = true;
+    resetButton.disabled = true; // Disabled until asteroid is kicked
     player.x = mouseX; player.y = mouseY; player.prevX = mouseX; player.prevY = mouseY;
-    //lastKickAngle = null; lastKickVelocity = null;
     hoveredPlanet = null; draggedPlanet = null; isDraggingPlanet = false;
+
+    // --- Handle Cursor Reset State ---
+    if (needsCursorReset) {
+        canKick = false; // Must move cursor away first
+        messageElement.textContent = 'Move cursor away from asteroid to begin.';
+        messageElement.className = ''; // Neutral style
+        console.log("Setup complete, waiting for cursor reset.");
+    } else {
+        canKick = true; // Allow kicking immediately
+        messageElement.textContent = 'Move cursor to kick. Click/Drag planets to move, Wheel over planets to resize.';
+        messageElement.className = '';
+        console.log("Setup complete, ready to kick.");
+    }
 
     if (!performanceData && !isGeneratingPerfMap) {
         triggerPerformanceMapGeneration("Initial generation...");
@@ -232,7 +302,12 @@ function setup() {
         drawPerformancePlaceholder("Generating...");
     }
 
-    gameLoop();
+    // --- Start the Game Loop ---
+    // Ensure no duplicate loops are running
+    if (animationFrameId) {
+         cancelAnimationFrame(animationFrameId);
+    }
+    animationFrameId = requestAnimationFrame(gameLoop); // Start the loop
 }
 
 function drawStarryBackground() {
@@ -240,29 +315,52 @@ function drawStarryBackground() {
 }
 
 function update() {
-    if (!gameActive) return;
+    // Stop updates if game is not active AND not waiting for cursor reset
+    // If needsCursorReset is true, we still need updates to check cursor position
+    if (!gameActive && !needsCursorReset) return;
 
-    // --- Player & Kick Logic ---
-    if (canKick && !isDraggingPlanet) { // Only allow player movement if not dragging a planet
-         player.update(mouseX, mouseY, config.playerSmoothFactor);
+    // --- Check for Cursor Reset Condition ---
+    if (needsCursorReset) {
+        const distCursorAsteroid = distance(mouseX, mouseY, asteroid.x, asteroid.y);
+        // Check if cursor is outside the combined radii + buffer
+        if (distCursorAsteroid > (config.playerRadius + asteroid.radius + config.cursorResetBuffer)) {
+            needsCursorReset = false;
+            canKick = true; // Enable kicking
+            messageElement.textContent = 'Move cursor to kick. Click/Drag planets to move, Wheel over planets to resize.';
+            console.log("Cursor reset condition met. Kicking enabled.");
+        } else {
+            // Keep player visually following the mouse even while waiting, but don't allow kick
+             if (!isDraggingPlanet) {
+                player.update(mouseX, mouseY, config.playerSmoothFactor);
+             }
+             // The game loop continues, but the kick logic below is skipped
+        }
     }
-    if (canKick && !asteroid.isMoving && !isDraggingPlanet) {
-        const distPlayerAsteroid = distance(player.x, player.y, asteroid.x, asteroid.y);
-        if (distPlayerAsteroid < player.radius + asteroid.radius) {
-            canKick = false;
-            asteroid.isMoving = true;
-            const kickVx = player.vx * config.kickStrength;
-            const kickVy = player.vy * config.kickStrength;
-            asteroid.vx = kickVx;
-            asteroid.vy = kickVy;
-            lastKickVelocity = Math.sqrt(kickVx * kickVx + kickVy * kickVy);
-            let angleRad = Math.atan2(-kickVy, kickVx);
-            lastKickAngle = (angleRad * 180 / Math.PI + 360) % 360;
-            messageElement.textContent = 'Asteroid launched!';
-            resetButton.disabled = false;
-            if (performanceData) {
-                 drawPerformanceVisualization();
-                 drawTrialMarker();
+
+    // --- Player & Kick Logic (only if kicking is allowed and not waiting for reset) ---
+    if (canKick && !needsCursorReset && !isDraggingPlanet) {
+         player.update(mouseX, mouseY, config.playerSmoothFactor);
+
+         if (!asteroid.isMoving) { // Check again if asteroid started moving somehow
+            const distPlayerAsteroid = distance(player.x, player.y, asteroid.x, asteroid.y);
+            if (distPlayerAsteroid < player.radius + asteroid.radius) {
+                console.log("Kick triggered!");
+                canKick = false; // Prevent immediate re-kick
+                asteroid.isMoving = true;
+                playSound('Start_3');
+                const kickVx = player.vx * config.kickStrength;
+                const kickVy = player.vy * config.kickStrength;
+                asteroid.vx = kickVx;
+                asteroid.vy = kickVy;
+                lastKickVelocity = Math.sqrt(kickVx * kickVx + kickVy * kickVy);
+                let angleRad = Math.atan2(-kickVy, kickVx);
+                lastKickAngle = (angleRad * 180 / Math.PI + 360) % 360;
+                messageElement.textContent = 'Asteroid launched!';
+                resetButton.disabled = false; // Enable reset button NOW
+                if (performanceData) {
+                     drawPerformanceVisualization();
+                     drawTrialMarker();
+                }
             }
         }
     }
@@ -330,34 +428,59 @@ function update() {
 
 function draw() {
     drawStarryBackground();
-    planets.forEach(planet => planet.draw(ctx)); // Planet draw method now handles hover effect
+    planets.forEach(planet => planet.draw(ctx));
     if (asteroid.isMoving) { asteroid.drawTrail(ctx, config.asteroidTrailColor); }
     asteroid.draw(ctx);
-    // Only draw player if they can kick and are not dragging a planet
-    if (canKick && !isDraggingPlanet) {
+
+    // Only draw player if they can kick (or are waiting for reset, to see where they are)
+    // AND not dragging a planet
+    if ((canKick || needsCursorReset) && !isDraggingPlanet) {
          player.draw(ctx);
     }
 }
 
 function endGame(success, msg) {
-    if (!gameActive) return;
-    gameActive = false;
+    if (!gameActive) return; // Prevent multiple calls
+    console.log(`Game ended: ${success ? 'Success' : 'Failure'} - ${msg}`);
+    gameActive = false; // Mark game as inactive
+    canKick = false; // Disable kicking immediately
     messageElement.textContent = msg;
     messageElement.className = success ? 'success' : 'failure';
-    resetButton.disabled = true;
+    resetButton.disabled = true; // Disable reset button during the brief pause
+
+
+    // --- Play Appropriate End Sound ---
+    if (success) {
+        playSound('EndSuccess_1'); // Play the sequence for success
+    } else {
+        // Check the failure message to play the correct sound
+        if (msg.includes('wrong planet')) {
+            playSound('EndFail_1');
+        } else if (msg.includes('lost in space')) {
+            playSound('EndOutside');
+        }
+    }
+
     if (resetTimeoutId) clearTimeout(resetTimeoutId);
     resetTimeoutId = setTimeout(() => {
         resetTimeoutId = null;
-        setup();
+        needsCursorReset = true; // !!! SET FLAG FOR NEXT AUTO-RESET !!!
+        console.log("Auto-resetting trial, cursor reset required.");
+        setup(); // Call setup, which will handle the needsCursorReset flag
     }, config.autoResetDelay);
 }
+
 
 function gameLoop() {
     update();
     draw();
-    // Continue looping if game is active OR asteroid is moving OR canKick OR dragging planet (to show planet position)
-    if (gameActive || asteroid.isMoving || canKick || isDraggingPlanet) {
+
+    // Continue looping if game is active OR asteroid is moving OR waiting for cursor reset OR dragging planet
+    if (gameActive || asteroid.isMoving || needsCursorReset || isDraggingPlanet) {
          animationFrameId = requestAnimationFrame(gameLoop);
+    } else {
+         console.log("Game loop stopping."); // Should only happen if game ended and reset timer hasn't fired yet
+         animationFrameId = null; // Clear the ID
     }
 }
 
@@ -743,6 +866,28 @@ canvas.addEventListener('mousemove', (event) => {
     // Hover detection is handled in the update() loop for efficiency
 });
 
+// --- START BUTTON LISTENER ---
+startButton.addEventListener('click', () => {
+    console.log("Start button clicked, initializing game...");
+
+    // Hide start button and overlay, show game elements
+    startButton.style.display = 'none';
+    gameContainer.classList.add('game-started'); // Removes overlay via CSS
+    uiControls.style.display = 'flex';
+    gravityControls.style.display = 'flex';
+    performanceSection.style.display = 'block';
+
+    // Ensure sounds are ready (should have been preloaded)
+    // We might attempt to unlock audio context here if needed, though preloading helps
+     // Example: Play a silent sound to potentially unlock context on some browsers
+     // const silentSound = new Audio(); silentSound.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'; silentSound.play().catch(()=>{});
+
+    // Initialize and start the game
+    needsCursorReset = false; // No cursor reset needed on first start
+    setup(); // This will now also start the game loop
+});
+
+
 // Main Canvas Mouse Down (Handles planet dragging start)
 canvas.addEventListener('mousedown', (event) => {
     // Check if clicking on a planet
@@ -805,15 +950,21 @@ canvas.addEventListener('wheel', (event) => {
 });
 
 resetButton.addEventListener('click', () => {
-    if (resetTimeoutId) clearTimeout(resetTimeoutId);
+    console.log("Manual reset clicked.");
+    if (resetTimeoutId) clearTimeout(resetTimeoutId); // Clear auto-reset timer
     resetTimeoutId = null;
+    if (animationFrameId) cancelAnimationFrame(animationFrameId); // Stop current loop
+    animationFrameId = null;
+
     // Stop potential ongoing map generation before reset
     if (isGeneratingPerfMap) {
         isGeneratingPerfMap = false; // Signal cancellation
         perfStatusElement.textContent = 'Resetting trial...';
         perfStatusElement.style.color = '#ccc';
     }
-    setup();
+
+    needsCursorReset = false; // !!! MANUAL RESET: DO NOT require cursor move !!!
+    setup(); // Restart the game setup and loop
 });
 
 
@@ -827,4 +978,9 @@ gravitySlider.addEventListener('input', (event) => {
 // --- Initialization ---
 gravitySlider.value = config.gravityConstant;
 gravityValueSpan.textContent = config.gravityConstant.toFixed(1);
-setup(); // Initial setup
+
+preloadSounds(); 
+console.log("Game ready. Click 'Start Game' button.");
+drawPerformancePlaceholder("Click Start Game");
+perfStatusElement.textContent = "Waiting for game start...";
+perfStatusElement.style.color = '#ccc';
