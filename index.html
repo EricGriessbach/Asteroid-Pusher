@@ -15,11 +15,11 @@
         <button id="startButton">Start Game</button>
 
         <!-- UI Elements (Initially hidden via style attribute) -->
-        <div id="ui-controls" style="display: none;"> {/* REMOVED COMMENT */}
+        <div id="ui-controls" style="display: none;"> 
             <button id="resetButton">Reset Trial</button>
             <p id="message"></p>
         </div>
-        <div id="gravity-controls" style="display: none;"> {/* REMOVED COMMENT */}
+        <div id="gravity-controls" style="display: none;"> 
             <label for="gravitySlider">Gravity:</label>
             <input type="range" id="gravitySlider" min="0" max="10" step="0.5" value="5">
             <span id="gravityValue">5</span>
@@ -27,7 +27,7 @@
     </div>
 
     <!-- Performance Visualization Section (Initially hidden via style attribute) -->
-    <div id="performance-section" style="display: none;"> {/* REMOVED COMMENT */}
+    <div id="performance-section" style="display: none;"> 
         <h2>Performance Map (Kick Angle vs. Velocity)</h2>
         <p class="perf-legend">Color indicates closest approach to target (Green = Close, Red = Far)</p>
         <canvas id="performanceCanvas"></canvas>
