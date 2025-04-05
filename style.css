@@ -195,3 +195,43 @@ h1 {
 #game-container.game-started::before {
     display: none; /* Hide overlay when game starts */
 }
+
+.instructions-container {
+    background-color: rgba(0, 0, 0, 0.7);
+    border: 1px solid #0f8;
+    box-shadow: 0 0 10px #0f8;
+    border-radius: 5px;
+    padding: 15px 25px;
+    max-width: 800px;
+    margin: 0 auto 20px auto;
+    text-align: center;
+    color: #eee;
+}
+
+.instructions-container h2 {
+    color: #0f8;
+    text-shadow: 0 0 5px #0f8;
+    margin-bottom: 15px;
+    font-size: 1.3em;
+}
+
+.instructions-container p {
+    margin-bottom: 12px;
+    line-height: 1.5;
+}
+
+.instructions-container .highlight {
+    color: #0f8;
+    font-weight: bold;
+}
+
+.instructions-container .warning {
+    color: #f44;
+    font-weight: bold;
+}
+
+.instructions-container .mission-count {
+    font-size: 1.1em;
+    font-weight: bold;
+    margin-top: 10px;
+}
