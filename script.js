@@ -32,16 +32,16 @@ let config = {
     canvasHeight: 900, // Increased height
     starCount: 250, // Slightly more stars for bigger area
     playerRadius: 10,
-    playerColor: '#0af',
+    playerColor: '#fff',
     playerSmoothFactor: 0.15,
-    asteroidRadius: 15,
-    asteroidColor: '#aaa',
+    resourceRadius: 15,
+    resourceColor: '#2b82c9',
     // Adjust start position relative to new size if needed, or keep absolute
-    asteroidStartX: () => config.canvasWidth / 2, // Keep centered horizontally
-    asteroidStartY: () => config.canvasHeight - 150, // Keep relative distance from bottom
-    asteroidTrailLength: 70,
-    asteroidTrailColor: 'rgba(170, 170, 170, 0.5)',
-    kickStrength: 1.0,
+    resourceStartX: () => config.canvasWidth / 2, // Keep centered horizontally
+    resourceStartY: () => config.canvasHeight - 150, // Keep relative distance from bottom
+    resourceTrailLength: 70,
+    resourceTrailColor: 'rgba(170, 170, 170, 0.5)',
+    kickStrength: 0.5,
     gravityConstant: 5,
     planetMassFactor: 0.5,
     // --- Planet Interaction Config ---
@@ -72,7 +72,7 @@ let config = {
 let mouseX = config.canvasWidth / 2;
 let mouseY = config.canvasHeight / 2;
 let player;
-let asteroid;
+let resource;
 let planets = [];
 let targetPlanet;
 let stars = [];
@@ -93,6 +93,17 @@ let hoveredPlanet = null; // The planet the mouse is currently over
 let draggedPlanet = null; // The planet currently being dragged
 let isDraggingPlanet = false; // Flag to indicate dragging state
 
+// --- Block and Trial State
+const TRIALS_PER_BLOCK = 20;
+let currentTrialInBlock = 1;
+let currentBlockNumber = 1;
+let totalScore = 0; // Optional: Track total successes across blocks
+let blockSuccessCount = 0; // <<< NEW: Counter for successes in the current block
+let isInBreak = false;
+let breakCountdown = 10;
+let breakTimerId = null;
+let waitingForSpacebar = false;
+
 // --- Utility Functions ---
 function distance(x1, y1, x2, y2) {
     const dx = x2 - x1;
@@ -104,7 +115,7 @@ function interpolate(current, target, factor) {
     return current + (target - current) * factor;
 }
 
-// --- Game Objects (Classes Circle, Player, Asteroid, Planet) ---
+// --- Game Objects (Classes Circle, Player, Resource, Planet) ---
 class Circle {
     constructor(x, y, radius, color) {
         this.x = x; this.y = y; this.radius = radius; this.color = color; this.vx = 0; this.vy = 0;
@@ -121,12 +132,12 @@ class Player extends Circle {
         this.prevX = this.x; this.prevY = this.y; this.x = interpolate(this.x, targetX, smoothFactor); this.y = interpolate(this.y, targetY, smoothFactor); this.vx = this.x - this.prevX; this.vy = this.y - this.prevY;
     }
 }
-class Asteroid extends Circle {
+class Resource extends Circle {
     constructor(x, y, radius, color) {
         super(x, y, radius, color); this.isMoving = false; this.trail = [];
     }
     addTrailPoint() {
-        this.trail.push({ x: this.x, y: this.y }); if (this.trail.length > config.asteroidTrailLength) { this.trail.shift(); }
+        this.trail.push({ x: this.x, y: this.y }); if (this.trail.length > config.resourceTrailLength) { this.trail.shift(); }
     }
     drawTrail(context, trailColor) {
         if (this.trail.length < 2) return; context.beginPath(); context.moveTo(this.trail[0].x, this.trail[0].y); for (let i = 1; i < this.trail.length; i++) { const alpha = i / this.trail.length * 0.5; const baseColor = trailColor.substring(0, trailColor.lastIndexOf(',')); context.strokeStyle = `${baseColor}, ${alpha.toFixed(2)})`; const xc = (this.trail[i].x + this.trail[i - 1].x) / 2; const yc = (this.trail[i].y + this.trail[i - 1].y) / 2; context.quadraticCurveTo(this.trail[i - 1].x, this.trail[i - 1].y, xc, yc); } context.lineWidth = 2; context.stroke(); context.lineWidth = 1;
@@ -152,7 +163,7 @@ class Planet extends Circle {
              context.strokeStyle = '#fff'; context.lineWidth = 2; context.stroke();
              context.shadowBlur = 0; context.lineWidth = 1;
              context.fillStyle = '#fff'; context.font = '12px sans-serif';
-             context.textAlign = 'center'; context.fillText('TARGET', this.x, this.y - this.radius - 5);
+             context.textAlign = 'center'; context.fillText('Earth', this.x, this.y - this.radius - 5);
              context.textAlign = 'left';
         }
     }
@@ -237,18 +248,18 @@ function setup() {
     stars = [];
     for (let i = 0; i < config.starCount; i++) { stars.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, radius: Math.random() * 1.5, alpha: Math.random() * 0.5 + 0.2 }); }
     player = new Player(canvas.width / 2, canvas.height - 50, config.playerRadius, config.playerColor);
-    asteroid = new Asteroid(config.asteroidStartX(), config.asteroidStartY(), config.asteroidRadius, config.asteroidColor);
+    resource = new Resource(config.resourceStartX(), config.resourceStartY(), config.resourceRadius, config.resourceColor);
 
     // --- Planets (Create ONLY if they don't exist yet) ---
     if (planets.length === 0) {
         console.log("Initializing planets for the first time.");
         planets = [
             new Planet(540.0, 392.6, 20, '#d9a443'),
-            new Planet(897.0, 391.6, 35, '#43a0d9'),
+            new Planet(897.0, 391.6, 35, '#0f8'),
             new Planet(703.0, 420.6, 25, '#d94343'),
             new Planet(600.0, 419.6, 25, '#d92313'),
             new Planet(799.0, 399.6, 25, '#888'),
-            new Planet(696.0, 170.6, 65, '#0f8', true), // Target
+            new Planet(696.0, 170.6, 85, '#2b82c9', true), // Target
         ];
         // Ensure masses are calculated on initial creation
         planets.forEach(p => p.recalculateMass());
@@ -275,15 +286,15 @@ function setup() {
 
     // --- State Reset ---
     gameActive = true; // Game becomes active during setup
-    asteroid.isMoving = false; asteroid.vx = 0; asteroid.vy = 0; asteroid.trail = [];
-    resetButton.disabled = true; // Disabled until asteroid is kicked
+    resource.isMoving = false; resource.vx = 0; resource.vy = 0; resource.trail = [];
+    resetButton.disabled = true; // Disabled until resource is kicked
     player.x = mouseX; player.y = mouseY; player.prevX = mouseX; player.prevY = mouseY;
     hoveredPlanet = null; draggedPlanet = null; isDraggingPlanet = false;
 
     // --- Handle Cursor Reset State ---
     if (needsCursorReset) {
         canKick = false; // Must move cursor away first
-        messageElement.textContent = 'Move cursor away from asteroid to begin.';
+        messageElement.textContent = 'Move cursor away from resource to begin.';
         messageElement.className = ''; // Neutral style
         console.log("Setup complete, waiting for cursor reset.");
     } else {
@@ -321,9 +332,9 @@ function update() {
 
     // --- Check for Cursor Reset Condition ---
     if (needsCursorReset) {
-        const distCursorAsteroid = distance(mouseX, mouseY, asteroid.x, asteroid.y);
+        const distCursorResource = distance(mouseX, mouseY, resource.x, resource.y);
         // Check if cursor is outside the combined radii + buffer
-        if (distCursorAsteroid > (config.playerRadius + asteroid.radius + config.cursorResetBuffer)) {
+        if (distCursorResource > (config.playerRadius + resource.radius + config.cursorResetBuffer)) {
             needsCursorReset = false;
             canKick = true; // Enable kicking
             messageElement.textContent = 'Move cursor to kick. Click/Drag planets to move, Wheel over planets to resize.';
@@ -341,21 +352,21 @@ function update() {
     if (canKick && !needsCursorReset && !isDraggingPlanet) {
          player.update(mouseX, mouseY, config.playerSmoothFactor);
 
-         if (!asteroid.isMoving) { // Check again if asteroid started moving somehow
-            const distPlayerAsteroid = distance(player.x, player.y, asteroid.x, asteroid.y);
-            if (distPlayerAsteroid < player.radius + asteroid.radius) {
+         if (!resource.isMoving) { // Check again if resource started moving somehow
+            const distPlayerResource = distance(player.x, player.y, resource.x, resource.y);
+            if (distPlayerResource < player.radius + resource.radius) {
                 console.log("Kick triggered!");
                 canKick = false; // Prevent immediate re-kick
-                asteroid.isMoving = true;
+                resource.isMoving = true;
                 playSound('Start_3');
                 const kickVx = player.vx * config.kickStrength;
                 const kickVy = player.vy * config.kickStrength;
-                asteroid.vx = kickVx;
-                asteroid.vy = kickVy;
+                resource.vx = kickVx;
+                resource.vy = kickVy;
                 lastKickVelocity = Math.sqrt(kickVx * kickVx + kickVy * kickVy);
                 let angleRad = Math.atan2(-kickVy, kickVx);
                 lastKickAngle = (angleRad * 180 / Math.PI + 360) % 360;
-                messageElement.textContent = 'Asteroid launched!';
+                messageElement.textContent = 'Resource launched!';
                 resetButton.disabled = false; // Enable reset button NOW
                 if (performanceData) {
                      drawPerformanceVisualization();
@@ -365,42 +376,42 @@ function update() {
         }
     }
 
-    // --- Asteroid Physics ---
-    if (asteroid.isMoving) {
+    // --- Resource Physics ---
+    if (resource.isMoving) {
         let totalAccX = 0, totalAccY = 0;
         planets.forEach(planet => {
-            const distAsteroidPlanet = distance(asteroid.x, asteroid.y, planet.x, planet.y);
-            if (distAsteroidPlanet > asteroid.radius + planet.radius) {
-                const forceDirX = planet.x - asteroid.x, forceDirY = planet.y - asteroid.y;
-                const forceMagnitude = config.gravityConstant * planet.mass / (distAsteroidPlanet * distAsteroidPlanet);
-                const accX = forceMagnitude * (forceDirX / distAsteroidPlanet), accY = forceMagnitude * (forceDirY / distAsteroidPlanet);
+            const distResourcePlanet = distance(resource.x, resource.y, planet.x, planet.y);
+            if (distResourcePlanet > resource.radius + planet.radius) {
+                const forceDirX = planet.x - resource.x, forceDirY = planet.y - resource.y;
+                const forceMagnitude = config.gravityConstant * planet.mass / (distResourcePlanet * distResourcePlanet);
+                const accX = forceMagnitude * (forceDirX / distResourcePlanet), accY = forceMagnitude * (forceDirY / distResourcePlanet);
                 totalAccX += accX; totalAccY += accY;
             }
         });
-        asteroid.vx += totalAccX * config.timeStep;
-        asteroid.vy += totalAccY * config.timeStep;
-        asteroid.x += asteroid.vx * config.timeStep;
-        asteroid.y += asteroid.vy * config.timeStep;
-        asteroid.addTrailPoint();
+        resource.vx += totalAccX * config.timeStep;
+        resource.vy += totalAccY * config.timeStep;
+        resource.x += resource.vx * config.timeStep;
+        resource.y += resource.vy * config.timeStep;
+        resource.addTrailPoint();
 
         // --- Game End Conditions ---
         // Corrected Off-screen check using config dimensions
-        if (asteroid.x < -asteroid.radius || asteroid.x > config.canvasWidth + asteroid.radius ||
-            asteroid.y < -asteroid.radius || asteroid.y > config.canvasHeight + asteroid.radius) {
-            endGame(false, 'Asteroid lost in space!'); return;
+        if (resource.x < -resource.radius || resource.x > config.canvasWidth + resource.radius ||
+            resource.y < -resource.radius || resource.y > config.canvasHeight + resource.radius) {
+            endGame(false, 'Resource lost in space!'); return;
         }
         for (const planet of planets) {
-            const distAsteroidPlanet = distance(asteroid.x, asteroid.y, planet.x, planet.y);
-            if (distAsteroidPlanet < asteroid.radius + planet.radius) {
+            const distResourcePlanet = distance(resource.x, resource.y, planet.x, planet.y);
+            if (distResourcePlanet < resource.radius + planet.radius) {
                 if (planet.isTarget) { endGame(true, 'Target reached!'); }
                 else { endGame(false, 'Hit the wrong planet!'); }
                 return;
             }
         }
         if (targetPlanet) { // Check if targetPlanet exists
-            const distToTarget = distance(asteroid.x, asteroid.y, targetPlanet.x, targetPlanet.y);
-            if (distToTarget < asteroid.radius + targetPlanet.radius + config.successThreshold) {
-                const dotProduct = (asteroid.x - targetPlanet.x) * asteroid.vx + (asteroid.y - targetPlanet.y) * asteroid.vy;
+            const distToTarget = distance(resource.x, resource.y, targetPlanet.x, targetPlanet.y);
+            if (distToTarget < resource.radius + targetPlanet.radius + config.successThreshold) {
+                const dotProduct = (resource.x - targetPlanet.x) * resource.vx + (resource.y - targetPlanet.y) * resource.vy;
                 if (dotProduct >= 0) {
                     endGame(true, 'Target grazed successfully!'); return;
                 }
@@ -428,32 +439,46 @@ function update() {
 
 function draw() {
     drawStarryBackground();
-    planets.forEach(planet => planet.draw(ctx));
-    if (asteroid.isMoving) { asteroid.drawTrail(ctx, config.asteroidTrailColor); }
-    asteroid.draw(ctx);
 
-    // Only draw player if they can kick (or are waiting for reset, to see where they are)
-    // AND not dragging a planet
-    if ((canKick || needsCursorReset) && !isDraggingPlanet) {
+    // Draw planets first
+    planets.forEach(planet => planet.draw(ctx));
+
+    // Draw resource and trail if moving
+    if (resource.isMoving) {
+        resource.drawTrail(ctx, config.resourceTrailColor);
+    }
+    resource.draw(ctx);
+
+    // Draw player conditionally
+    if ((canKick || needsCursorReset) && !isDraggingPlanet && !isInBreak) { // Don't draw player during break
          player.draw(ctx);
+    }
+
+    // --- Draw Trial/Block Info --- NEW ---
+    drawTrialInfo();
+
+    // --- Draw Break Overlay if in break --- NEW ---
+    if (isInBreak) {
+        drawBreakOverlay();
     }
 }
 
 function endGame(success, msg) {
-    if (!gameActive) return; // Prevent multiple calls
-    console.log(`Game ended: ${success ? 'Success' : 'Failure'} - ${msg}`);
-    gameActive = false; // Mark game as inactive
-    canKick = false; // Disable kicking immediately
+    if (!gameActive && !isInBreak) return;
+
+    console.log(`Trial ${currentTrialInBlock}/${TRIALS_PER_BLOCK} (Block ${currentBlockNumber}) ended: ${success ? 'Success' : 'Failure'} - ${msg}`);
+    gameActive = false;
+    canKick = false;
     messageElement.textContent = msg;
     messageElement.className = success ? 'success' : 'failure';
-    resetButton.disabled = true; // Disable reset button during the brief pause
+    resetButton.disabled = true;
 
-
-    // --- Play Appropriate End Sound ---
     if (success) {
-        playSound('EndSuccess_1'); // Play the sequence for success
+        totalScore++; // Optional total score
+        blockSuccessCount++; // <<< INCREMENT block success counter
+        playSound('EndSuccess_1');
     } else {
-        // Check the failure message to play the correct sound
+        // ... (failure sound logic) ...
         if (msg.includes('wrong planet')) {
             playSound('EndFail_1');
         } else if (msg.includes('lost in space')) {
@@ -461,57 +486,212 @@ function endGame(success, msg) {
         }
     }
 
-    if (resetTimeoutId) clearTimeout(resetTimeoutId);
-    resetTimeoutId = setTimeout(() => {
+    // --- Block Completion Logic ---
+    if (currentTrialInBlock >= TRIALS_PER_BLOCK) {
+        console.log(`Block ${currentBlockNumber} completed. Successes this block: ${blockSuccessCount}`); // Log success count
+        if (resetTimeoutId) clearTimeout(resetTimeoutId);
         resetTimeoutId = null;
-        needsCursorReset = true; // !!! SET FLAG FOR NEXT AUTO-RESET !!!
-        console.log("Auto-resetting trial, cursor reset required.");
-        setup(); // Call setup, which will handle the needsCursorReset flag
-    }, config.autoResetDelay);
+        startBreak();
+    } else {
+        // --- NEXT TRIAL WITHIN BLOCK ---
+        currentTrialInBlock++;
+        if (resetTimeoutId) clearTimeout(resetTimeoutId);
+        resetTimeoutId = setTimeout(() => {
+            resetTimeoutId = null;
+            needsCursorReset = true;
+            console.log("Auto-resetting for next trial, cursor reset required.");
+            setup();
+        }, config.autoResetDelay);
+    }
+}
+
+function startBreak() {
+    isInBreak = true;
+    waitingForSpacebar = false; // Not waiting yet, countdown running
+    breakCountdown = 10; // Reset countdown
+    if (breakTimerId) clearInterval(breakTimerId); // Clear any previous timer
+
+    console.log(`Starting 10 second break. Caught this block: ${blockSuccessCount}/${TRIALS_PER_BLOCK}`); // Added count to log
+
+    // --- Update message to include score ---
+    messageElement.textContent = `Block Complete! (Caught ${blockSuccessCount}/${TRIALS_PER_BLOCK}) Break: ${breakCountdown}s`;
+    messageElement.className = ''; // Neutral style for break message
+
+    // Disable interactions during break
+    resetButton.disabled = true;
+    gravitySlider.disabled = true;
+
+    // Start the countdown timer
+    breakTimerId = setInterval(updateBreakTimer, 1000);
+
+    // Ensure the game loop continues for drawing the break overlay
+    if (!animationFrameId) {
+        animationFrameId = requestAnimationFrame(gameLoop);
+    }
+}
+
+function updateBreakTimer() {
+    breakCountdown--;
+    if (breakCountdown > 0) {
+        // --- Update countdown message to include score ---
+        messageElement.textContent = `Block Complete! (Caught ${blockSuccessCount}/${TRIALS_PER_BLOCK}) Break: ${breakCountdown}s`;
+    } else {
+        // Countdown finished
+        clearInterval(breakTimerId);
+        breakTimerId = null;
+        waitingForSpacebar = true; // Now waiting for spacebar
+
+        // --- Update final message to include score ---
+        messageElement.textContent = `Block Complete! (Caught ${blockSuccessCount}/${TRIALS_PER_BLOCK}) Press SPACEBAR!`;
+        console.log("Break finished. Waiting for Spacebar.");
+        // Re-enable controls if desired now, or wait until spacebar press
+        // gravitySlider.disabled = false;
+    }
+    // The draw function will handle updating the canvas display using this text
+}
+
+function startNextBlock() {
+    if (!isInBreak || !waitingForSpacebar) return;
+
+    console.log("Spacebar pressed, starting next block.");
+    isInBreak = false;
+    waitingForSpacebar = false;
+
+    currentBlockNumber++;
+    currentTrialInBlock = 1;
+    blockSuccessCount = 0; // <<< RESET the counter for the new block
+
+    // Re-enable any disabled controls
+    resetButton.disabled = false;
+    gravitySlider.disabled = false;
+
+    messageElement.textContent = '';
+    messageElement.className = '';
+
+    needsCursorReset = false;
+    setup();
+}
+
+function drawTrialInfo() {
+    ctx.fillStyle = '#eee';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top'; // Set baseline to top for consistent positioning from Y
+
+    const lineSpacing = 20; // Space between lines of text
+    let currentY = 20; // Starting Y position
+
+    ctx.fillText(`Block: ${currentBlockNumber}`, 20, currentY);
+    currentY += lineSpacing; // Move down for the next line
+
+    ctx.fillText(`Trial: ${currentTrialInBlock} / ${TRIALS_PER_BLOCK}`, 20, currentY);
+    currentY += lineSpacing; // Move down
+
+    // --- Display the new counter ---
+    ctx.fillText(`Caught This Block: ${blockSuccessCount} / ${TRIALS_PER_BLOCK}`, 20, currentY);
+
+    // Optional: Display total score
+    // currentY += lineSpacing;
+    // ctx.fillText(`Total Score: ${totalScore}`, 20, currentY);
+
+    // Reset text alignment/baseline if needed for other drawing operations later
+    // ctx.textAlign = 'left'; // Already left
+    // ctx.textBaseline = 'alphabetic'; // Reset if necessary
 }
 
 
+// --- NEW Function to Draw Break Overlay ---
+function drawBreakOverlay() {
+    // Semi-transparent background overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Break Text Styling
+    ctx.fillStyle = '#0f8'; // Use a prominent color
+    ctx.font = 'bold 36px sans-serif'; // Slightly smaller font might be needed
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // --- Get the full message text ---
+    const fullMessage = messageElement.textContent;
+
+    // --- Split the message for potentially better layout ---
+    // Example: Split at the first parenthesis or specific keyword like "Break" or "Press"
+    let line1 = fullMessage;
+    let line2 = "";
+
+    // Try splitting based on common patterns in our messages
+    const breakSplitIndex = fullMessage.indexOf(" Break:");
+    const pressSplitIndex = fullMessage.indexOf(" Press SPACEBAR!");
+
+    if (pressSplitIndex !== -1) {
+        line1 = fullMessage.substring(0, pressSplitIndex).trim();
+        line2 = "Press SPACEBAR!";
+    } else if (breakSplitIndex !== -1) {
+        line1 = fullMessage.substring(0, breakSplitIndex).trim();
+        line2 = fullMessage.substring(breakSplitIndex).trim();
+    }
+    // If neither pattern matches, it will just draw line1 (the full message)
+
+    // --- Draw the text lines ---
+    const lineSpacing = 45; // Adjust as needed based on font size
+    ctx.fillText(line1, canvas.width / 2, canvas.height / 2 - lineSpacing / 2);
+    if (line2) {
+        ctx.fillText(line2, canvas.width / 2, canvas.height / 2 + lineSpacing / 2);
+    }
+
+
+    // Reset text alignment/baseline if other drawings depend on it
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic'; // Or whatever the default is
+}
+
 function gameLoop() {
-    update();
+    if (!isInBreak) {
+        update();
+    } else {
+        
+    }
+     
     draw();
 
-    // Continue looping if game is active OR asteroid is moving OR waiting for cursor reset OR dragging planet
-    if (gameActive || asteroid.isMoving || needsCursorReset || isDraggingPlanet) {
-         animationFrameId = requestAnimationFrame(gameLoop);
-    } else {
-         console.log("Game loop stopping."); // Should only happen if game ended and reset timer hasn't fired yet
-         animationFrameId = null; // Clear the ID
-    }
+    // Continue looping if game is active OR resource is moving OR waiting for cursor reset OR dragging planet OR IN BREAK
+    if (gameActive || resource.isMoving || needsCursorReset || isDraggingPlanet || isInBreak) {
+        animationFrameId = requestAnimationFrame(gameLoop);
+   } else {
+        console.log("Game loop stopping.");
+        animationFrameId = null;
+   }
 }
 
 // --- Performance Map Simulation ---
 
 function simulateTrial(initialVx, initialVy) {
-    let simAsteroid = {
-        x: config.asteroidStartX(),
-        y: config.asteroidStartY(),
-        vx: initialVx * config.kickStrength,
-        vy: initialVy * config.kickStrength,
-        radius: config.asteroidRadius
+    let simResource = {
+        x: config.resourceStartX(),
+        y: config.resourceStartY(),
+        vx: initialVx,
+        vy: initialVy,
+        radius: config.resourceRadius
     };
 
     // Calculate combined radii for efficiency ONLY IF targetPlanet exists
-    const targetRadiiSum = targetPlanet ? simAsteroid.radius + targetPlanet.radius : 0;
+    const targetRadiiSum = targetPlanet ? simResource.radius + targetPlanet.radius : 0;
     let minTargetSurfaceDist = Infinity; // Track distance to SURFACE
 
     // --- Initial State Checks ---
     // Check for immediate collision with non-target planets
     for (const planet of planets) {
         if (!planet.isTarget) {
-            const distSimPlanetCheck = distance(simAsteroid.x, simAsteroid.y, planet.x, planet.y);
-            if (distSimPlanetCheck <= simAsteroid.radius + planet.radius) {
+            const distSimPlanetCheck = distance(simResource.x, simResource.y, planet.x, planet.y);
+            if (distSimPlanetCheck <= simResource.radius + planet.radius) {
                 return Infinity; // FAIL: Starts inside a non-target planet
             }
         }
     }
     // Check for immediate collision with target planet
     if (targetPlanet) {
-        const initialTargetDist = distance(simAsteroid.x, simAsteroid.y, targetPlanet.x, targetPlanet.y);
+        const initialTargetDist = distance(simResource.x, simResource.y, targetPlanet.x, targetPlanet.y);
         if (initialTargetDist <= targetRadiiSum) {
             return 0; // SUCCESS: Starts inside target
         }
@@ -525,11 +705,11 @@ function simulateTrial(initialVx, initialVy) {
         // --- Calculate Gravity ---
         let totalAccX = 0, totalAccY = 0;
         planets.forEach(planet => {
-            const distSimPlanetGrav = distance(simAsteroid.x, simAsteroid.y, planet.x, planet.y);
+            const distSimPlanetGrav = distance(simResource.x, simResource.y, planet.x, planet.y);
             // Check distance > 0 to avoid division by zero if somehow starting exactly at center
             if (distSimPlanetGrav > 0) {
-                const forceDirX = planet.x - simAsteroid.x;
-                const forceDirY = planet.y - simAsteroid.y;
+                const forceDirX = planet.x - simResource.x;
+                const forceDirY = planet.y - simResource.y;
                 const distSq = distSimPlanetGrav * distSimPlanetGrav;
                 const forceMagnitude = config.gravityConstant * planet.mass / distSq;
                 // Apply acceleration only if outside the planet radius (standard physics)
@@ -543,16 +723,16 @@ function simulateTrial(initialVx, initialVy) {
         });
 
         // --- Update Velocity & Position ---
-        simAsteroid.vx += totalAccX * config.timeStep;
-        simAsteroid.vy += totalAccY * config.timeStep;
-        simAsteroid.x += simAsteroid.vx * config.timeStep;
-        simAsteroid.y += simAsteroid.vy * config.timeStep;
+        simResource.vx += totalAccX * config.timeStep;
+        simResource.vy += totalAccY * config.timeStep;
+        simResource.x += simResource.vx * config.timeStep;
+        simResource.y += simResource.vy * config.timeStep;
 
         // --- Collision Check AFTER movement ---
         let hitNonTarget = false;
         for (const planet of planets) {
-             const distSimPlanetCheck = distance(simAsteroid.x, simAsteroid.y, planet.x, planet.y);
-             const radiiSum = simAsteroid.radius + planet.radius; // Combined radii for this check
+             const distSimPlanetCheck = distance(simResource.x, simResource.y, planet.x, planet.y);
+             const radiiSum = simResource.radius + planet.radius; // Combined radii for this check
 
              if (distSimPlanetCheck <= radiiSum) {
                  if (planet.isTarget) {
@@ -568,7 +748,7 @@ function simulateTrial(initialVx, initialVy) {
 
         // --- Update Minimum Distance to Target Surface ---
         if (targetPlanet) {
-            const currentTargetCenterDist = distance(simAsteroid.x, simAsteroid.y, targetPlanet.x, targetPlanet.y);
+            const currentTargetCenterDist = distance(simResource.x, simResource.y, targetPlanet.x, targetPlanet.y);
             const currentTargetSurfaceDist = currentTargetCenterDist - targetRadiiSum;
             minTargetSurfaceDist = Math.min(minTargetSurfaceDist, currentTargetSurfaceDist);
         } else {
@@ -576,8 +756,8 @@ function simulateTrial(initialVx, initialVy) {
         }
 
         // --- Check Off-screen AFTER movement & collision checks ---
-        if (simAsteroid.x < -config.simOffScreenBuffer || simAsteroid.x > config.canvasWidth + config.simOffScreenBuffer ||
-            simAsteroid.y < -config.simOffScreenBuffer || simAsteroid.y > config.canvasHeight + config.simOffScreenBuffer) {
+        if (simResource.x < -config.simOffScreenBuffer || simResource.x > config.canvasWidth + config.simOffScreenBuffer ||
+            simResource.y < -config.simOffScreenBuffer || simResource.y > config.canvasHeight + config.simOffScreenBuffer) {
             // Went off-screen. Return the minimum surface distance found *before* going off-screen.
             // If minTargetSurfaceDist <= 0, it means we hit/grazed target before going off, which counts as success (0).
              return (minTargetSurfaceDist <= 0) ? 0 : Infinity;
@@ -872,21 +1052,40 @@ startButton.addEventListener('click', () => {
 
     // Hide start button and overlay, show game elements
     startButton.style.display = 'none';
-    gameContainer.classList.add('game-started'); // Removes overlay via CSS
+    gameContainer.classList.add('game-started');
     uiControls.style.display = 'flex';
     gravityControls.style.display = 'flex';
     performanceSection.style.display = 'block';
 
-    // Ensure sounds are ready (should have been preloaded)
-    // We might attempt to unlock audio context here if needed, though preloading helps
-     // Example: Play a silent sound to potentially unlock context on some browsers
-     // const silentSound = new Audio(); silentSound.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'; silentSound.play().catch(()=>{});
+    // Initialize Block/Trial State
+    currentBlockNumber = 1;
+    currentTrialInBlock = 1;
+    totalScore = 0;
+    blockSuccessCount = 0; // <<< RESET counter on initial start
+    isInBreak = false;
+    waitingForSpacebar = false;
+    if (breakTimerId) clearInterval(breakTimerId);
 
     // Initialize and start the game
-    needsCursorReset = false; // No cursor reset needed on first start
-    setup(); // This will now also start the game loop
+    needsCursorReset = false;
+    setup();
 });
 
+window.addEventListener('keydown', (event) => {
+    // --- Existing 'P' key listener ---
+    if (event.key === 'p' || event.key === 'P') {
+        // ... (keep existing planet info logging code) ...
+        console.log("--- Current Planet Configuration ---");
+        // ... rest of 'p' key code ...
+        console.log("----------------------------------");
+    }
+
+    // --- NEW Spacebar Listener for Breaks ---
+    if (event.code === 'Space' && isInBreak && waitingForSpacebar) {
+        event.preventDefault(); // Prevent default spacebar action (like scrolling)
+        startNextBlock();
+    }
+});
 
 // Main Canvas Mouse Down (Handles planet dragging start)
 canvas.addEventListener('mousedown', (event) => {
@@ -913,7 +1112,7 @@ canvas.addEventListener('mouseup', (event) => {
         // Final trigger for regeneration after drag ends
         triggerPerformanceMapGeneration("Planet move finished...");
         // Allow kicking again AFTER a short delay to prevent immediate kick on mouseup
-        setTimeout(() => { canKick = !asteroid.isMoving; }, 100);
+        setTimeout(() => { canKick = !resource.isMoving; }, 100);
     }
 });
 
@@ -924,7 +1123,7 @@ canvas.addEventListener('mouseleave', (event) => {
         draggedPlanet = null;
         canvas.style.cursor = 'default';
         triggerPerformanceMapGeneration("Planet move finished (mouse left)...");
-        setTimeout(() => { canKick = !asteroid.isMoving; }, 100);
+        setTimeout(() => { canKick = !resource.isMoving; }, 100);
     }
      hoveredPlanet = null; // Clear hover state when mouse leaves
 });
