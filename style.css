@@ -116,43 +116,6 @@ h1 {
     text-align: right;
 }
 
-/* Performance Visualization Styles */
-#performance-section {
-    margin-top: 20px;
-    text-align: center;
-    /* --- Adjusted width --- */
-    width: 1400px; /* Match game canvas width */
-}
-
-#performance-section h2 {
-    margin-bottom: 5px;
-    color: #ccc;
-}
-
-.perf-legend {
-    font-size: 0.9em;
-    color: #aaa;
-    margin-bottom: 10px;
-}
-
-#performanceCanvas {
-    border: 1px solid #444;
-    background-color: #111;
-    /* --- Adjusted size --- */
-    width: 1400px; /* Match config.canvasWidth */
-    height: 200px; /* Keep height fixed */
-    display: block;
-    margin: 0 auto;
-    cursor: default;
-}
-
-#perf-status {
-    margin-top: 10px;
-    color: #ccc;
-    font-style: italic;
-    min-height: 1.2em;
-    font-size: 0.9em;
-}
 
 #startButton {
     position: absolute;
@@ -234,4 +197,74 @@ h1 {
     font-size: 1.1em;
     font-weight: bold;
     margin-top: 10px;
+}
+
+#performance-plot-container {
+    background-color: #111; /* Slightly lighter than body background */
+    border: 1px solid #555;
+    border-radius: 8px;
+    padding: 20px;
+    margin-top: 30px; /* Space below game container */
+    max-width: 600px; /* Control width */
+    width: 90%;
+    text-align: center;
+    color: #ccc;
+}
+
+#performance-plot-container h2 {
+    color: #eee;
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+#performance-plot-container p {
+    font-size: 0.9em;
+    margin-bottom: 15px;
+}
+
+#generatePlotButton {
+    padding: 10px 20px;
+    font-size: 1em;
+    cursor: pointer;
+    background-color: #0a6faa; /* A different color */
+    color: white;
+    border: none;
+    border-radius: 5px;
+    transition: background-color 0.2s ease;
+    margin-bottom: 15px;
+}
+
+#generatePlotButton:hover {
+    background-color: #1e8bc3;
+}
+
+#generatePlotButton:disabled {
+    background-color: #333;
+    cursor: not-allowed;
+}
+
+#plot-canvas-wrapper {
+    position: relative; /* Needed for absolute positioning of status message */
+    display: inline-block; /* Shrink wrap the canvas */
+    background-color: #222; /* Background for the plot area */
+    border: 1px solid #444;
+    padding: 10px; /* Padding around the canvas */
+    border-radius: 5px;
+}
+
+#performancePlotCanvas {
+    display: block; /* Remove extra space below canvas */
+}
+
+.plot-status-message {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    padding: 10px 15px;
+    border-radius: 5px;
+    font-weight: bold;
+    z-index: 30; /* Above canvas content */
+    display: none; /* Hidden by default */
 }
