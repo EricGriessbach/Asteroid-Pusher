@@ -249,10 +249,10 @@ function setup() {
     if (planets.length === 0) {
         console.log("Initializing planets for the first time.");
         planets = [
-            new Planet(540.0, 392.6, 20, '#d9a443'),
+            new Planet(560.0, 392.6, 20, '#d9a443'),
             new Planet(897.0, 391.6, 35, '#0f8'),
             new Planet(703.0, 420.6, 25, '#d94343'),
-            new Planet(600.0, 419.6, 25, '#d92313'),
+            new Planet(610.0, 419.6, 25, '#d92313'),
             new Planet(799.0, 399.6, 25, '#888'),
             new Planet(696.0, 170.6, 85, '#2b82c9', true), // Target
         ];
