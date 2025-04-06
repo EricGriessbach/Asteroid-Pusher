@@ -5,15 +5,16 @@ const startButton = document.getElementById('startButton'); // Get start button
 const gameContainer = document.getElementById('game-container'); // Get container
 const uiControls = document.getElementById('ui-controls');
 const gravityControls = document.getElementById('gravity-controls');
-const performanceSection = document.getElementById('performance-section');
 const resetButton = document.getElementById('resetButton');
 const messageElement = document.getElementById('message');
 const gravitySlider = document.getElementById('gravitySlider');
 const gravityValueSpan = document.getElementById('gravityValue');
-// Performance Map Elements
-const perfCanvas = document.getElementById('performanceCanvas');
-const perfCtx = perfCanvas.getContext('2d');
-const perfStatusElement = document.getElementById('perf-status');
+const performancePlotCanvas = document.getElementById("performancePlotCanvas");
+const perfCtx = performancePlotCanvas.getContext('2d');
+const generatePlotButton = document.getElementById('generatePlotButton');
+const plotStatusElement = document.getElementById('plotStatus');
+
+
 const soundAssetsPath = 'assets/';
 const sounds = {};
 
@@ -36,12 +37,11 @@ let config = {
     playerSmoothFactor: 0.15,
     resourceRadius: 15,
     resourceColor: '#2b82c9',
-    // Adjust start position relative to new size if needed, or keep absolute
     resourceStartX: () => config.canvasWidth / 2, // Keep centered horizontally
     resourceStartY: () => config.canvasHeight - 150, // Keep relative distance from bottom
     resourceTrailLength: 70,
     resourceTrailColor: 'rgba(170, 170, 170, 0.5)',
-    kickStrength: 0.5,
+    kickStrength: 0.5, // NOTE: Plot uses direct velocity, not kick strength
     gravityConstant: 5,
     planetMassFactor: 0.5,
     // --- Planet Interaction Config ---
@@ -52,22 +52,20 @@ let config = {
     successThreshold: 0,
     timeStep: 1,
     autoResetDelay: 1500,
-    // --- Performance Map ---
-    perfMapAngles: 72,
-    perfMapVelocities: 20,
-    perfMapMaxVelocity: 15,
-    perfMapMinVelocity: 1,
-    perfMapSimSteps: 800,
-    perfMapMaxDistColor: 400,
-    perfMapHitLineColor: '#FFFFFF',
-    perfMapMarkerColor: '#000000',
-    perfMapMarkerRadius: 3,
     // --- Off-Screen Buffer for Simulation ---
     simOffScreenBuffer: 50, // How far off screen before simulation stops
-    cursorResetBuffer: 10 // Extra pixels distance needed to reset
+    cursorResetBuffer: 10, // Extra pixels distance needed to reset
 
+    // --- Performance Map Configuration --- ADD THESE ---
+    perfMapSize: 400, // Must match canvas width/height in HTML
+    perfMapSimSteps: 500, // Max simulation steps per trial (adjust for performance)
+    perfMapMinVel: 1, // Minimum velocity magnitude to plot
+    perfMapMaxVel: 15, // Maximum velocity magnitude to plot
+    perfMapVelSteps: 30, // Number of velocity increments (radius rings)
+    perfMapAngleSteps: 72, // Number of angle increments (slices)
+    perfMapMaxDistColor: 50 // Distance threshold for color mapping (pixels from surface)
+    // -----------------------------------------------------
 };
-
 // --- Game State ---
 let mouseX = config.canvasWidth / 2;
 let mouseY = config.canvasHeight / 2;
@@ -81,12 +79,6 @@ let gameActive = false; // Start as inactive
 let animationFrameId = null;
 let resetTimeoutId = null;
 let needsCursorReset = false; // NEW: Flag for cursor reset requirement
-
-// Performance Map State
-let performanceData = null;
-let isGeneratingPerfMap = false;
-let lastKickAngle = null;
-let lastKickVelocity = null;
 
 // --- Planet Interaction State ---
 let hoveredPlanet = null; // The planet the mouse is currently over
@@ -103,6 +95,11 @@ let isInBreak = false;
 let breakCountdown = 10;
 let breakTimerId = null;
 let waitingForSpacebar = false;
+
+let blockTrialMarkers = []; // Stores { velocity, angleRad } for successful kicks in block
+let lastHeatmapImageData = null; // Stores the underlying heatmap image
+let lastKickVelocity = 0; // Store last kick velocity magnitude here
+let lastKickAngle = 0; // Store last kick angle (degrees or radians) here
 
 // --- Utility Functions ---
 function distance(x1, y1, x2, y2) {
@@ -242,8 +239,6 @@ function setup() {
 
     canvas.width = config.canvasWidth;
     canvas.height = config.canvasHeight;
-    perfCanvas.width = config.canvasWidth; 
-    perfCanvas.height = 200; 
 
     stars = [];
     for (let i = 0; i < config.starCount; i++) { stars.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, radius: Math.random() * 1.5, alpha: Math.random() * 0.5 + 0.2 }); }
@@ -304,15 +299,6 @@ function setup() {
         console.log("Setup complete, ready to kick.");
     }
 
-    if (!performanceData && !isGeneratingPerfMap) {
-        triggerPerformanceMapGeneration("Initial generation...");
-    } else if (performanceData) {
-        drawPerformanceVisualization();
-        drawTrialMarker();
-    } else {
-        drawPerformancePlaceholder("Generating...");
-    }
-
     // --- Start the Game Loop ---
     // Ensure no duplicate loops are running
     if (animationFrameId) {
@@ -350,31 +336,41 @@ function update() {
 
     // --- Player & Kick Logic (only if kicking is allowed and not waiting for reset) ---
     if (canKick && !needsCursorReset && !isDraggingPlanet) {
-         player.update(mouseX, mouseY, config.playerSmoothFactor);
+        player.update(mouseX, mouseY, config.playerSmoothFactor);
 
-         if (!resource.isMoving) { // Check again if resource started moving somehow
-            const distPlayerResource = distance(player.x, player.y, resource.x, resource.y);
-            if (distPlayerResource < player.radius + resource.radius) {
-                console.log("Kick triggered!");
-                canKick = false; // Prevent immediate re-kick
-                resource.isMoving = true;
-                playSound('Start_3');
-                const kickVx = player.vx * config.kickStrength;
-                const kickVy = player.vy * config.kickStrength;
-                resource.vx = kickVx;
-                resource.vy = kickVy;
-                lastKickVelocity = Math.sqrt(kickVx * kickVx + kickVy * kickVy);
-                let angleRad = Math.atan2(-kickVy, kickVx);
-                lastKickAngle = (angleRad * 180 / Math.PI + 360) % 360;
-                messageElement.textContent = 'Resource launched!';
-                resetButton.disabled = false; // Enable reset button NOW
-                if (performanceData) {
-                     drawPerformanceVisualization();
-                     drawTrialMarker();
-                }
-            }
-        }
-    }
+        if (!resource.isMoving) { // Check again if resource started moving somehow
+           const distPlayerResource = distance(player.x, player.y, resource.x, resource.y);
+           if (distPlayerResource < player.radius + resource.radius) {
+               console.log("Kick triggered!");
+               canKick = false; // Prevent immediate re-kick
+               resource.isMoving = true;
+               playSound('Start_3');
+
+               // Calculate ACTUAL initial velocity applied to resource
+               const kickVx = player.vx * config.kickStrength;
+               const kickVy = player.vy * config.kickStrength;
+
+               // --- STORE KICK DATA ---
+               lastKickVelocity = Math.sqrt(kickVx * kickVx + kickVy * kickVy);
+               // Calculate angle (radians) from +X axis, accounting for canvas Y-down
+               // atan2(y, x), but use -vy for standard math angle
+               lastKickAngleRad = Math.atan2(-kickVy, kickVx);
+               // Keep angle in 0 to 2*PI range if needed, although atan2 handles quadrants correctly
+               if (lastKickAngleRad < 0) {
+                   lastKickAngleRad += 2 * Math.PI;
+               }
+               // Also store degrees for potential display elsewhere if needed
+               lastKickAngleDeg = lastKickAngleRad * 180 / Math.PI;
+               // -----------------------
+
+               resource.vx = kickVx;
+               resource.vy = kickVy;
+
+               messageElement.textContent = 'Resource launched!';
+               resetButton.disabled = false; // Enable reset button NOW
+           }
+       }
+   }
 
     // --- Resource Physics ---
     if (resource.isMoving) {
@@ -464,6 +460,7 @@ function draw() {
 }
 
 function endGame(success, msg) {
+    // Prevent duplicate calls if called again before reset timer fires
     if (!gameActive && !isInBreak) return;
 
     console.log(`Trial ${currentTrialInBlock}/${TRIALS_PER_BLOCK} (Block ${currentBlockNumber}) ended: ${success ? 'Success' : 'Failure'} - ${msg}`);
@@ -471,14 +468,37 @@ function endGame(success, msg) {
     canKick = false;
     messageElement.textContent = msg;
     messageElement.className = success ? 'success' : 'failure';
-    resetButton.disabled = true;
+    resetButton.disabled = true; // Disable reset until next setup
 
+    // --- ADD MARKER DATA (Moved outside the 'if (success)' block) ---
+    if (lastKickVelocity > 0) { // Only add if a valid kick was recorded
+        blockTrialMarkers.push({
+            velocity: lastKickVelocity,
+            angleRad: lastKickAngleRad,
+            success: success // Store the outcome
+        });
+        console.log(`Added marker: V=${lastKickVelocity.toFixed(2)}, A=${(lastKickAngleRad * 180 / Math.PI).toFixed(1)}°, Success=${success}`);
+        // Trigger plot redraw AFTER adding data
+        redrawPlotWithMarkers();
+    } else if (!resource.isMoving) {
+        // This case might happen if endGame is called unexpectedly before a kick
+        console.warn("Trial ended, but resource was not moving (no kick data). Marker not added.");
+    } else {
+        // Kick happened, but velocity/angle somehow wasn't recorded? Should be rare.
+         console.warn("Trial ended, but lastKickVelocity was 0. Marker not added.");
+    }
+    // Reset last kick info regardless of whether a marker was added
+    lastKickVelocity = 0;
+    lastKickAngleRad = 0;
+    // ----------------------------------------------------------------
+
+    // --- Handle Sounds and Score based on Success ---
     if (success) {
         totalScore++; // Optional total score
-        blockSuccessCount++; // <<< INCREMENT block success counter
+        blockSuccessCount++;
         playSound('EndSuccess_1');
     } else {
-        // ... (failure sound logic) ...
+        // Failure sound logic...
         if (msg.includes('wrong planet')) {
             playSound('EndFail_1');
         } else if (msg.includes('lost in space')) {
@@ -488,10 +508,10 @@ function endGame(success, msg) {
 
     // --- Block Completion Logic ---
     if (currentTrialInBlock >= TRIALS_PER_BLOCK) {
-        console.log(`Block ${currentBlockNumber} completed. Successes this block: ${blockSuccessCount}`); // Log success count
+        console.log(`Block ${currentBlockNumber} completed. Successes this block: ${blockSuccessCount}`);
         if (resetTimeoutId) clearTimeout(resetTimeoutId);
         resetTimeoutId = null;
-        startBreak();
+        startBreak(); // Break automatically clears markers in startNextBlock
     } else {
         // --- NEXT TRIAL WITHIN BLOCK ---
         currentTrialInBlock++;
@@ -500,7 +520,7 @@ function endGame(success, msg) {
             resetTimeoutId = null;
             needsCursorReset = true;
             console.log("Auto-resetting for next trial, cursor reset required.");
-            setup();
+            setup(); // Setup resets canKick etc.
         }, config.autoResetDelay);
     }
 }
@@ -559,18 +579,54 @@ function startNextBlock() {
 
     currentBlockNumber++;
     currentTrialInBlock = 1;
-    blockSuccessCount = 0; // <<< RESET the counter for the new block
+    blockSuccessCount = 0;
 
-    // Re-enable any disabled controls
-    resetButton.disabled = false;
+    // --- CLEAR MARKERS ---
+    blockTrialMarkers = [];
+    // Trigger redraw to show empty plot (or just the heatmap if generated)
+    redrawPlotWithMarkers();
+    // -------------------
+
+    // Re-enable controls
+    resetButton.disabled = true; // Should be disabled until kick
     gravitySlider.disabled = false;
 
     messageElement.textContent = '';
     messageElement.className = '';
 
+    needsCursorReset = false; // Start fresh, allow kick immediately if cursor ok
+    setup(); // Setup handles initial message and canKick state
+}
+
+// --- START BUTTON LISTENER ---
+startButton.addEventListener('click', () => {
+    console.log("Start button clicked, initializing game...");
+
+    // Hide start button and overlay, show game elements
+    startButton.style.display = 'none';
+    gameContainer.classList.add('game-started');
+    uiControls.style.display = 'flex';
+    gravityControls.style.display = 'flex';
+
+    // Initialize Block/Trial State
+    currentBlockNumber = 1;
+    currentTrialInBlock = 1;
+    totalScore = 0;
+    blockSuccessCount = 0;
+    isInBreak = false;
+    waitingForSpacebar = false;
+    if (breakTimerId) clearInterval(breakTimerId);
+
+    // --- CLEAR MARKERS ON GAME START ---
+    blockTrialMarkers = [];
+    // Redraw plot (likely just shows placeholder or last heatmap without markers)
+    redrawPlotWithMarkers();
+    // -----------------------------------
+
+    // Initialize and start the game
     needsCursorReset = false;
     setup();
-}
+});
 
 function drawTrialInfo() {
     ctx.fillStyle = '#eee';
@@ -666,7 +722,16 @@ function gameLoop() {
 
 // --- Performance Map Simulation ---
 
-function simulateTrial(initialVx, initialVy) {
+// --- Performance Map Simulation ---
+
+// Modify simulateTrial to accept planets and targetPlanet
+function simulateTrial(initialVx, initialVy, simPlanets, simTargetPlanet) {
+    // If no target planet exists in the simulation scenario, return failure immediately
+    if (!simTargetPlanet) {
+        console.warn("SimulateTrial called without a target planet.");
+        return Infinity; // No target means impossible to succeed
+    }
+
     let simResource = {
         x: config.resourceStartX(),
         y: config.resourceStartY(),
@@ -675,13 +740,12 @@ function simulateTrial(initialVx, initialVy) {
         radius: config.resourceRadius
     };
 
-    // Calculate combined radii for efficiency ONLY IF targetPlanet exists
-    const targetRadiiSum = targetPlanet ? simResource.radius + targetPlanet.radius : 0;
+    const targetRadiiSum = simResource.radius + simTargetPlanet.radius;
     let minTargetSurfaceDist = Infinity; // Track distance to SURFACE
 
     // --- Initial State Checks ---
     // Check for immediate collision with non-target planets
-    for (const planet of planets) {
+    for (const planet of simPlanets) {
         if (!planet.isTarget) {
             const distSimPlanetCheck = distance(simResource.x, simResource.y, planet.x, planet.y);
             if (distSimPlanetCheck <= simResource.radius + planet.radius) {
@@ -689,14 +753,12 @@ function simulateTrial(initialVx, initialVy) {
             }
         }
     }
-    // Check for immediate collision with target planet
-    if (targetPlanet) {
-        const initialTargetDist = distance(simResource.x, simResource.y, targetPlanet.x, targetPlanet.y);
-        if (initialTargetDist <= targetRadiiSum) {
-            return 0; // SUCCESS: Starts inside target
-        }
-        minTargetSurfaceDist = initialTargetDist - targetRadiiSum; // Initial surface distance
+    // Check for immediate collision/start inside target planet
+    const initialTargetDist = distance(simResource.x, simResource.y, simTargetPlanet.x, simTargetPlanet.y);
+    if (initialTargetDist <= targetRadiiSum) {
+        return 0; // SUCCESS: Starts inside target
     }
+    minTargetSurfaceDist = initialTargetDist - targetRadiiSum; // Initial surface distance
 
 
     // --- Simulation Loop ---
@@ -704,16 +766,16 @@ function simulateTrial(initialVx, initialVy) {
 
         // --- Calculate Gravity ---
         let totalAccX = 0, totalAccY = 0;
-        planets.forEach(planet => {
+        simPlanets.forEach(planet => {
             const distSimPlanetGrav = distance(simResource.x, simResource.y, planet.x, planet.y);
-            // Check distance > 0 to avoid division by zero if somehow starting exactly at center
-            if (distSimPlanetGrav > 0) {
+            if (distSimPlanetGrav > 0) { // Avoid division by zero
                 const forceDirX = planet.x - simResource.x;
                 const forceDirY = planet.y - simResource.y;
                 const distSq = distSimPlanetGrav * distSimPlanetGrav;
+                // Use the *current* game gravity constant for the simulation
                 const forceMagnitude = config.gravityConstant * planet.mass / distSq;
-                // Apply acceleration only if outside the planet radius (standard physics)
-                 if (distSimPlanetGrav > planet.radius){ // Optional: Prevents gravity pull from inside, consistent with game
+                 // Apply acceleration only if outside the planet radius (standard physics)
+                 if (distSimPlanetGrav > planet.radius){
                     const accX = forceMagnitude * (forceDirX / distSimPlanetGrav);
                     const accY = forceMagnitude * (forceDirY / distSimPlanetGrav);
                     totalAccX += accX;
@@ -730,16 +792,15 @@ function simulateTrial(initialVx, initialVy) {
 
         // --- Collision Check AFTER movement ---
         let hitNonTarget = false;
-        for (const planet of planets) {
+        for (const planet of simPlanets) {
              const distSimPlanetCheck = distance(simResource.x, simResource.y, planet.x, planet.y);
-             const radiiSum = simResource.radius + planet.radius; // Combined radii for this check
+             const radiiSum = simResource.radius + planet.radius;
 
              if (distSimPlanetCheck <= radiiSum) {
                  if (planet.isTarget) {
-                     // SUCCESS: Hit target - return 0 distance immediately
-                     return 0; // Represents zero distance to surface
+                     return 0; // SUCCESS: Hit target surface
                  } else {
-                     hitNonTarget = true; // Mark collision with non-target
+                     hitNonTarget = true;
                      break; // Exit planet loop
                  }
              }
@@ -747,288 +808,267 @@ function simulateTrial(initialVx, initialVy) {
         if (hitNonTarget) return Infinity; // FAILURE: Hit wrong planet
 
         // --- Update Minimum Distance to Target Surface ---
-        if (targetPlanet) {
-            const currentTargetCenterDist = distance(simResource.x, simResource.y, targetPlanet.x, targetPlanet.y);
-            const currentTargetSurfaceDist = currentTargetCenterDist - targetRadiiSum;
-            minTargetSurfaceDist = Math.min(minTargetSurfaceDist, currentTargetSurfaceDist);
-        } else {
-            minTargetSurfaceDist = Infinity; // No target means infinite distance
-        }
+        const currentTargetCenterDist = distance(simResource.x, simResource.y, simTargetPlanet.x, simTargetPlanet.y);
+        // Ensure distance calculation doesn't go negative if slightly inside due to discrete steps
+        const currentTargetSurfaceDist = Math.max(0, currentTargetCenterDist - targetRadiiSum);
+        minTargetSurfaceDist = Math.min(minTargetSurfaceDist, currentTargetSurfaceDist);
 
         // --- Check Off-screen AFTER movement & collision checks ---
         if (simResource.x < -config.simOffScreenBuffer || simResource.x > config.canvasWidth + config.simOffScreenBuffer ||
             simResource.y < -config.simOffScreenBuffer || simResource.y > config.canvasHeight + config.simOffScreenBuffer) {
-            // Went off-screen. Return the minimum surface distance found *before* going off-screen.
-            // If minTargetSurfaceDist <= 0, it means we hit/grazed target before going off, which counts as success (0).
-             return (minTargetSurfaceDist <= 0) ? 0 : Infinity;
+            // Went off-screen. Return based on closest approach *before* going off-screen.
+             return (minTargetSurfaceDist <= config.successThreshold) ? 0 : Infinity; // Use successThreshold here too
         }
     } // End simulation loop
 
     // Loop finished (max steps) without hitting non-target or going off-screen.
-    // Return the closest approach to the target surface found.
-    // If minTargetSurfaceDist is <= 0, it counts as a hit/graze, return 0.
-    // Otherwise, return the positive minimum surface distance (capped for color mapping).
-    if (!targetPlanet) return Infinity; // Should be caught earlier, but safety check
-
-    if (minTargetSurfaceDist <= 0) {
-        return 0; // Hit or grazed
+    // Return the closest approach. If it was within threshold, count as success (0).
+    if (minTargetSurfaceDist <= config.successThreshold) {
+        return 0; // Hit or grazed sufficiently close
     } else {
-        // Return the positive surface distance, capped by the color threshold
-        // We map color based on this positive distance.
-        return Math.min(minTargetSurfaceDist, config.perfMapMaxDistColor * 1.5); // Cap prevents extreme values distorting color scale too much
+        // Return the positive surface distance, capped for color mapping.
+        // Cap prevents extreme values distorting color scale too much
+        return Math.min(minTargetSurfaceDist, config.perfMapMaxDistColor * 1.1);
     }
 }
 
-// --- Wrapper to trigger performance map generation ---
-function triggerPerformanceMapGeneration(reason = "Recalculating map...") {
-    if (isGeneratingPerfMap) {
-       isGeneratingPerfMap = false; // Request cancellation of the ongoing generation
-       perfStatusElement.textContent = `Map generation cancelled (${reason}). Regenerating...`;
-       perfStatusElement.style.color = '#ff8c00'; // Orange for cancellation/restart
-       // Give a brief moment for the async check inside generatePerformanceData to catch the cancellation
-       setTimeout(() => {
-           performanceData = null; // Invalidate old data immediately
-           lastKickAngle = null;   // Reset marker state
-           lastKickVelocity = null;
-           generatePerformanceData(); // Start new generation
-       }, 50); // Short delay
-    } else {
-        performanceData = null; // Invalidate old data
-        lastKickAngle = null;   // Reset marker state
-        lastKickVelocity = null;
-        perfStatusElement.textContent = reason + " Generating...";
-        perfStatusElement.style.color = '#ffcc00'; // Yellow for starting
-        drawPerformancePlaceholder("Calculating..."); // Show placeholder immediately
-        generatePerformanceData(); // Start generation
-    }
-}
+function mapVelocityToRadius(velocity, minVel, maxVel, maxPlotRadius) {
+    if (velocity < minVel) return 0;
+    if (velocity > maxVel) return maxPlotRadius;
+    if (maxVel <= minVel) return 0; // Avoid division by zero
 
-// Generates the data for the performance map (asynchronously)
-async function generatePerformanceData() {
-    if (isGeneratingPerfMap) { // Should have been cancelled by trigger function, but double-check
-        console.warn("generatePerformanceData called while already generating. Exiting.");
-        return;
-    }
-    // Ensure target exists before starting generation
-    if (!targetPlanet) {
-        console.error("Cannot generate performance map: Target planet not found.");
-        perfStatusElement.textContent = 'Error: Target planet missing.';
-        perfStatusElement.style.color = '#f44';
-        drawPerformancePlaceholder("Error: No Target");
-        isGeneratingPerfMap = false; // Ensure flag is reset
-        return;
-    }
-
-    isGeneratingPerfMap = true; // Set flag *after* initial checks
-    // Status already set by trigger function
-
-    const numAngles = config.perfMapAngles;
-    const numVelocities = config.perfMapVelocities;
-    const angleStep = 360 / numAngles;
-    const velocityStep = (config.perfMapMaxVelocity - config.perfMapMinVelocity) / (numVelocities > 1 ? (numVelocities - 1) : 1);
-
-    let data = Array(numVelocities).fill(null).map(() => Array(numAngles).fill(Infinity));
-    let overallMin = Infinity, overallMax = 0;
-    const totalSims = numAngles * numVelocities;
-    let simsProcessed = 0;
-
-    // --- Performance Map Generation Loop ---
-    for (let j = 0; j < numVelocities; j++) {
-        const velocity = config.perfMapMinVelocity + j * velocityStep;
-        for (let i = 0; i < numAngles; i++) {
-             // --- Check for cancellation request ---
-             if (!isGeneratingPerfMap) {
-                 console.log("Performance map generation cancelled.");
-                 perfStatusElement.textContent = 'Map generation cancelled.';
-                 perfStatusElement.style.color = '#ff8c00';
-                 // Don't draw placeholder here, trigger function handles it
-                 return; // Exit the generation loop
-             }
-
-            const angle = i * angleStep;
-            const rad = angle * Math.PI / 180;
-            const vx = velocity * Math.cos(rad);
-            const vy = -velocity * Math.sin(rad);
-
-            const minDist = simulateTrial(vx, vy);
-            data[j][i] = minDist;
-
-            if (isFinite(minDist)) {
-                overallMin = Math.min(overallMin, minDist);
-                overallMax = Math.max(overallMax, minDist);
-            }
-
-            simsProcessed++;
-            if (simsProcessed % 100 === 0) { // Update status less frequently
-                 perfStatusElement.textContent = `Generating map... (${((simsProcessed / totalSims) * 100).toFixed(0)}%)`;
-                 await new Promise(resolve => setTimeout(resolve, 0)); // Yield control briefly
-            }
-        }
-    }
-    // --- End of Generation Loop ---
-
-    // Check again if cancelled right at the end
-     if (!isGeneratingPerfMap) {
-          console.log("Performance map generation cancelled just before completion.");
-          perfStatusElement.textContent = 'Map generation cancelled.';
-          perfStatusElement.style.color = '#ff8c00';
-          return;
-     }
-
-
-    performanceData = data; // Store the final data
-    isGeneratingPerfMap = false; // Generation complete
-    perfStatusElement.textContent = 'Performance map generated.';
-    perfStatusElement.style.color = '#0f8'; // Green for success
-    console.log(`Performance Map: Min finite dist=${overallMin.toFixed(2)}, Max finite dist=${overallMax.toFixed(2)}`);
-
-    drawPerformanceVisualization();
-    drawTrialMarker(); // Draw marker if there was a kick before generation finished
-}
-
-// Draws a placeholder on the performance canvas
-function drawPerformancePlaceholder(text = "Calculating...") {
-     perfCtx.fillStyle = '#222';
-     perfCtx.fillRect(0, 0, perfCanvas.width, perfCanvas.height);
-     perfCtx.fillStyle = '#aaa';
-     perfCtx.font = '16px sans-serif';
-     perfCtx.textAlign = 'center';
-     perfCtx.fillText(text, perfCanvas.width / 2, perfCanvas.height / 2);
+    const normalizedVel = (velocity - minVel) / (maxVel - minVel);
+    return normalizedVel * maxPlotRadius;
 }
 
 
 // Maps a distance value to an HSL color (Green=Good, Red=Bad)
 function mapDistanceToColor(dist, maxDistThreshold = config.perfMapMaxDistColor) {
-    // dist now represents minimum distance to target *surface*
     if (!isFinite(dist)) {
-        return `hsl(0, 90%, 50%)`; // Red for failure (hit wrong planet / off-screen / no target)
+        return `hsl(0, 70%, 40%)`; // Darker Red for definite failure (hit wrong, off-screen)
     }
-    if (dist <= 0) { // Hit or grazed the target surface
+    // Success threshold check (using game config value)
+    if (dist <= config.successThreshold) { // Use the same threshold as the game logic
         return `hsl(120, 90%, 50%)`; // Bright Green for hit/graze
     }
-    // If dist > 0, it's a miss. Normalize based on threshold.
-    const normalized = Math.min(dist / maxDistThreshold, 1.0);
+    // If dist > successThreshold, it's a miss. Normalize based on color threshold.
+    // Clamp the distance used for normalization
+    const clampedDist = Math.min(dist, maxDistThreshold);
+    const normalized = clampedDist / maxDistThreshold; // Should be between 0 and 1
 
-    // Hue: 120 (green) for 0 distance *away from surface*, down to 0 (red) for maxDistThreshold away
-    // We want closer misses (small positive dist) to be yellower/greener than far misses.
-    const hue = 120 * (1 - normalized); // Green (120) at dist=0, Red (0) at dist=threshold
-    const saturation = 90;
-    const lightness = 50;
+    // Hue: 120 (green) for near misses just outside threshold, down to 0 (red) for misses >= maxDistThreshold away
+    const hue = 120 * (1 - normalized);
+    const saturation = 90; // Keep saturation high
+    const lightness = 50; // Keep lightness constant
 
     return `hsl(${hue.toFixed(0)}, ${saturation}%, ${lightness}%)`;
 }
 
+function generatePerformancePlot() {
+    console.log("Generating Performance Map...");
+    generatePlotButton.disabled = true;
+    plotStatusElement.textContent = 'Generating...';
+    plotStatusElement.style.display = 'block';
+    lastHeatmapImageData = null; // Clear previous heatmap data before generating new
 
-function drawPerformanceVisualization() {
-    if (!performanceData || !targetPlanet) {
-        // If targetPlanet is missing, generatePerformanceData handles placeholder
-        if (!targetPlanet) return;
-        // Otherwise, data might just not be ready yet
-        drawPerformancePlaceholder("No data available");
-        return;
-    };
-
-    const data = performanceData;
-    const numVelocities = data.length; if (numVelocities === 0) return;
-    const numAngles = data[0].length; if (numAngles === 0) return;
-
-    const cellWidth = perfCanvas.width / numAngles;
-    const cellHeight = perfCanvas.height / numVelocities;
-    const hitThreshold = 0; // Exact hit
-
-    perfCtx.clearRect(0, 0, perfCanvas.width, perfCanvas.height);
-
-    // 1. Draw Color Cells
-    for (let j = 0; j < numVelocities; j++) {
-        for (let i = 0; i < numAngles; i++) {
-            const minDist = data[j][i];
-            const color = mapDistanceToColor(minDist);
-            const x = i * cellWidth;
-            const y = perfCanvas.height - (j + 1) * cellHeight;
-            perfCtx.fillStyle = color;
-            perfCtx.fillRect(x, y, cellWidth + 1, cellHeight + 1); // Overlap slightly
+    setTimeout(() => {
+        const startTime = performance.now();
+        const currentTargetPlanet = planets.find(p => p.isTarget);
+        if (!currentTargetPlanet) {
+            console.error("Cannot generate plot: No target planet found.");
+            plotStatusElement.textContent = 'Error: No target planet!';
+            setTimeout(() => { generatePlotButton.disabled = false; }, 1000);
+            return;
         }
-    }
+        const simPlanets = planets.map(p => new Planet(p.x, p.y, p.radius, p.color, p.isTarget));
+        simPlanets.forEach(p => p.recalculateMass());
+        const simTargetPlanet = simPlanets.find(p => p.isTarget);
 
-    // 2. Draw Hit Boundary Lines
-    perfCtx.strokeStyle = config.perfMapHitLineColor;
-    perfCtx.lineWidth = 1.5;
-    perfCtx.beginPath();
-    for (let j = 0; j < numVelocities; j++) {
-        for (let i = 0; i < numAngles; i++) {
-            const isHit = data[j][i] === 0;
-            if (!isHit) continue;
+        const plotSize = config.perfMapSize;
+        const centerX = plotSize / 2;
+        const centerY = plotSize / 2;
+        const maxPlotRadius = plotSize / 2 * 0.9;
 
-            const x = i * cellWidth;
-            const y = perfCanvas.height - (j + 1) * cellHeight;
+        perfCtx.fillStyle = '#222';
+        perfCtx.fillRect(0, 0, plotSize, plotSize);
+        perfCtx.lineWidth = 1;
 
-            // Check neighbors (handle wrap-around for angles)
-            const rightIdx = (i + 1) % numAngles;
-            if (data[j][rightIdx] > 0 || !isFinite(data[j][rightIdx])) { perfCtx.moveTo(x + cellWidth, y); perfCtx.lineTo(x + cellWidth, y + cellHeight); }
-            const leftIdx = (i - 1 + numAngles) % numAngles;
-            if (data[j][leftIdx] > 0 || !isFinite(data[j][leftIdx])) { perfCtx.moveTo(x, y); perfCtx.lineTo(x, y + cellHeight); }
-            // Check vertical neighbors (no wrap-around for velocity)
-            if (j > 0 && (data[j - 1][i] > 0 || !isFinite(data[j - 1][i]))){ perfCtx.moveTo(x, y); perfCtx.lineTo(x + cellWidth, y); }
-             else if (j === 0) { perfCtx.moveTo(x, y); perfCtx.lineTo(x + cellWidth, y); } // Top edge boundary
-             if (j < numVelocities - 1 && (data[j + 1][i] > 0 || !isFinite(data[j + 1][i]))){ perfCtx.moveTo(x, y + cellHeight); perfCtx.lineTo(x + cellWidth, y + cellHeight); }
-             else if (j === numVelocities - 1) { perfCtx.moveTo(x, y + cellHeight); perfCtx.lineTo(x + cellWidth, y + cellHeight); } // Bottom edge boundary
+        const angleStepRad = (2 * Math.PI) / config.perfMapAngleSteps;
+        const velStep = (config.perfMapMaxVel - config.perfMapMinVel) / (config.perfMapVelSteps > 1 ? (config.perfMapVelSteps - 1) : 1); // Prevent div by zero if steps=1
+
+        // --- Draw Heatmap Segments ---
+        for (let i = 0; i < config.perfMapAngleSteps; i++) {
+            const angle1 = i * angleStepRad;
+            const angle2 = (i + 1) * angleStepRad;
+            for (let j = 0; j < config.perfMapVelSteps; j++) {
+                const vel1 = config.perfMapMinVel + j * velStep;
+                const simVel = vel1 + velStep / 2;
+                 if (simVel > config.perfMapMaxVel + 1e-6) continue;
+
+                const radius1 = mapVelocityToRadius(vel1, config.perfMapMinVel, config.perfMapMaxVel, maxPlotRadius);
+                const radius2 = mapVelocityToRadius(vel1 + velStep, config.perfMapMinVel, config.perfMapMaxVel, maxPlotRadius);
+
+                const simAngle = angle1 + angleStepRad / 2;
+                const initialVx = simVel * Math.cos(simAngle);
+                const initialVy = simVel * -Math.sin(simAngle);
+
+                const distanceResult = simulateTrial(initialVx, initialVy, simPlanets, simTargetPlanet);
+                const color = mapDistanceToColor(distanceResult, config.perfMapMaxDistColor);
+
+                perfCtx.beginPath();
+                perfCtx.arc(centerX, centerY, radius2, -angle2, -angle1);
+                perfCtx.arc(centerX, centerY, radius1, -angle1, -angle2, true);
+                perfCtx.closePath();
+                perfCtx.fillStyle = color;
+                perfCtx.fill();
+            }
         }
-    }
-    perfCtx.stroke();
 
-    // 3. Draw Axis Labels
-    perfCtx.fillStyle = '#DDD';
-    perfCtx.font = '12px sans-serif';
-    perfCtx.textAlign = 'center';
-    perfCtx.fillText(`Kick Angle (0° to 360°)`, perfCanvas.width / 2, perfCanvas.height - 8);
-    perfCtx.save();
-    perfCtx.translate(15, perfCanvas.height / 2);
-    perfCtx.rotate(-Math.PI / 2);
-    perfCtx.textAlign = 'center';
-    perfCtx.fillText(`Kick Velocity (${config.perfMapMinVelocity.toFixed(1)} to ${config.perfMapMaxVelocity.toFixed(1)} px/step)`, 0, 0);
-    perfCtx.restore();
+        // --- SAVE HEATMAP IMAGE DATA (Before drawing axes/markers) ---
+        try {
+            lastHeatmapImageData = perfCtx.getImageData(0, 0, plotSize, plotSize);
+            console.log("Heatmap image data saved.");
+        } catch (e) {
+            console.error("Error getting ImageData (maybe canvas tainted?):", e);
+            lastHeatmapImageData = null; // Ensure it's null if saving failed
+            plotStatusElement.textContent = 'Error saving map data!';
+        }
+        // ------------------------------------------------------------
+
+        // --- Redraw plot with axes and current markers ---
+        redrawPlotWithMarkers(); // This now handles drawing axes and markers
+
+        const endTime = performance.now();
+        console.log(`Performance Map generated in ${(endTime - startTime).toFixed(1)} ms.`);
+        plotStatusElement.textContent = `Generated (${(endTime - startTime).toFixed(0)} ms)`;
+        setTimeout(() => {
+            plotStatusElement.style.display = 'none';
+            generatePlotButton.disabled = false;
+        }, 2000);
+
+    }, 10);
 }
 
-// Draws the trial marker
-function drawTrialMarker() {
-    if (lastKickAngle === null || lastKickVelocity === null || !performanceData) {
-        return;
-    }
-    const clampedVelocity = Math.max(config.perfMapMinVelocity, Math.min(lastKickVelocity, config.perfMapMaxVelocity));
-    const x = (lastKickAngle / 360) * perfCanvas.width;
-    const velocityRange = config.perfMapMaxVelocity - config.perfMapMinVelocity;
-    // Handle edge case where range is 0
-    const normalizedVelocity = velocityRange > 0 ? (clampedVelocity - config.perfMapMinVelocity) / velocityRange : 0.5;
-    const y = perfCanvas.height - (normalizedVelocity * perfCanvas.height);
+function drawPlotAxesAndLabels(pCtx, cX, cY, maxR) {
+    pCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    pCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    pCtx.font = '10px sans-serif';
+    pCtx.textAlign = 'center';
+    pCtx.textBaseline = 'middle';
 
-    perfCtx.fillStyle = config.perfMapMarkerColor;
-    perfCtx.beginPath();
-    perfCtx.arc(x, y, config.perfMapMarkerRadius, 0, Math.PI * 2);
-    perfCtx.fill();
-    perfCtx.strokeStyle = '#FFFFFF';
-    perfCtx.lineWidth = 0.5;
-    perfCtx.stroke();
+    // Draw concentric circles for velocity levels
+    const numVelLabels = 4;
+    for (let i = 1; i <= numVelLabels; i++) {
+        const vel = config.perfMapMinVel + (i / numVelLabels) * (config.perfMapMaxVel - config.perfMapMinVel);
+        const r = mapVelocityToRadius(vel, config.perfMapMinVel, config.perfMapMaxVel, maxR);
+        pCtx.beginPath();
+        pCtx.arc(cX, cY, r, 0, 2 * Math.PI);
+        pCtx.stroke();
+        // Add velocity label (e.g., along the 0 degree line)
+        pCtx.fillText(vel.toFixed(1), cX + r, cY - 7);
+    }
+
+    // Draw radial lines for angles
+    const numAngleLabels = 8; // e.g., every 45 degrees
+    for (let i = 0; i < numAngleLabels; i++) {
+        const angle = (i / numAngleLabels) * 2 * Math.PI;
+        const endX = cX + maxR * Math.cos(angle);
+        const endY = cY - maxR * Math.sin(angle); // Y negative
+        pCtx.beginPath();
+        pCtx.moveTo(cX, cY);
+        pCtx.lineTo(endX, endY);
+        pCtx.stroke();
+        // Add angle label just outside the max radius
+        const labelX = cX + (maxR + 15) * Math.cos(angle);
+        const labelY = cY - (maxR + 15) * Math.sin(angle);
+        pCtx.fillText(`${(angle * 180 / Math.PI).toFixed(0)}°`, labelX, labelY);
+    }
+     // Reset alignment
+     pCtx.textAlign = 'start';
+     pCtx.textBaseline = 'alphabetic';
 }
+
+function drawAllTrialMarkers(pCtx, cX, cY, maxR) {
+    if (blockTrialMarkers.length === 0) return; // Nothing to draw
+
+    const markerRadius = 4; // Size of the marker dot
+    const lastIndex = blockTrialMarkers.length - 1;
+
+    blockTrialMarkers.forEach((marker, index) => {
+        // Map velocity to plot radius
+        const plotR = mapVelocityToRadius(marker.velocity, config.perfMapMinVel, config.perfMapMaxVel, maxR);
+
+        // Calculate marker position
+        // angleRad is already stored correctly (0 = right, positive = counter-clockwise)
+        // For canvas (Y down), plotY = cY - plotR * sin(angleRad)
+        const plotX = cX + plotR * Math.cos(marker.angleRad);
+        const plotY = cY - plotR * Math.sin(marker.angleRad); // Use MINUS sin for canvas Y-down
+
+        // Determine color
+        const isLast = (index === lastIndex);
+        pCtx.fillStyle = isLast ? '#00aeff' : '#000000'; // Blue for last, Black for others
+        pCtx.strokeStyle = isLast ? '#ffffff' : '#ffffff'; // White outline for visibility
+        pCtx.lineWidth = 1;
+
+
+        // Draw marker (e.g., a filled circle with outline)
+        pCtx.beginPath();
+        pCtx.arc(plotX, plotY, markerRadius, 0, Math.PI * 2);
+        pCtx.fill();
+        pCtx.stroke();
+    });
+     pCtx.lineWidth = 1; // Reset line width
+}
+
+function redrawPlotWithMarkers() {
+    const plotSize = config.perfMapSize;
+    const centerX = plotSize / 2;
+    const centerY = plotSize / 2;
+    const maxPlotRadius = plotSize / 2 * 0.9;
+
+    if (lastHeatmapImageData) {
+        // Restore the saved heatmap
+        try {
+             perfCtx.putImageData(lastHeatmapImageData, 0, 0);
+        } catch (e) {
+             console.error("Error putting ImageData:", e);
+             // Fallback: clear and show error message?
+             perfCtx.fillStyle = '#222';
+             perfCtx.fillRect(0, 0, plotSize, plotSize);
+             perfCtx.fillStyle = '#f55';
+             perfCtx.textAlign = 'center';
+             perfCtx.fillText('Error restoring map', centerX, centerY);
+             return; // Stop further drawing
+        }
+
+    } else {
+        // No heatmap generated yet, draw placeholder
+        perfCtx.fillStyle = '#222';
+        perfCtx.fillRect(0, 0, plotSize, plotSize);
+        perfCtx.fillStyle = '#aaa';
+        perfCtx.textAlign = 'center';
+        perfCtx.font = '14px sans-serif';
+        perfCtx.fillText('Generate map first', centerX, centerY);
+        perfCtx.textAlign = 'start'; // Reset alignment
+        // We can still try to draw markers even without a heatmap if needed,
+        // but let's return here for now. Or draw axes? Let's draw axes.
+         drawPlotAxesAndLabels(perfCtx, centerX, centerY, maxPlotRadius); // Draw axes even on placeholder
+         drawAllTrialMarkers(perfCtx, centerX, centerY, maxPlotRadius); // Draw markers on placeholder
+         return; // Exit after drawing placeholder, axes, markers
+    }
+
+    // Draw axes and labels ON TOP of the restored heatmap
+    drawPlotAxesAndLabels(perfCtx, centerX, centerY, maxPlotRadius);
+
+    // Draw all current trial markers ON TOP of heatmap and axes
+    drawAllTrialMarkers(perfCtx, centerX, centerY, maxPlotRadius);
+
+    console.log("Performance plot redrawn with markers.");
+}
+
 
 // --- Event Listeners ---
 
-// Debounce function
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-};
-
-// Regenerate performance map debounced function
-const debouncedTriggerPerfMapRegen = debounce((reason) => {
-     triggerPerformanceMapGeneration(reason);
-}, 1000); // 1 second debounce delay
 
 // Main Canvas Mouse Move (Handles player targeting, hover detection)
 canvas.addEventListener('mousemove', (event) => {
@@ -1040,8 +1080,7 @@ canvas.addEventListener('mousemove', (event) => {
     if (isDraggingPlanet && draggedPlanet) {
         draggedPlanet.x = mouseX;
         draggedPlanet.y = mouseY;
-        // Trigger regeneration *during* drag (debounced)
-        debouncedTriggerPerfMapRegen("Planet moved...");
+
     }
     // Hover detection is handled in the update() loop for efficiency
 });
@@ -1055,7 +1094,6 @@ startButton.addEventListener('click', () => {
     gameContainer.classList.add('game-started');
     uiControls.style.display = 'flex';
     gravityControls.style.display = 'flex';
-    performanceSection.style.display = 'block';
 
     // Initialize Block/Trial State
     currentBlockNumber = 1;
@@ -1110,7 +1148,6 @@ canvas.addEventListener('mouseup', (event) => {
         draggedPlanet = null;
         canvas.style.cursor = 'default'; // Restore cursor
         // Final trigger for regeneration after drag ends
-        triggerPerformanceMapGeneration("Planet move finished...");
         // Allow kicking again AFTER a short delay to prevent immediate kick on mouseup
         setTimeout(() => { canKick = !resource.isMoving; }, 100);
     }
@@ -1122,7 +1159,6 @@ canvas.addEventListener('mouseleave', (event) => {
         isDraggingPlanet = false;
         draggedPlanet = null;
         canvas.style.cursor = 'default';
-        triggerPerformanceMapGeneration("Planet move finished (mouse left)...");
         setTimeout(() => { canKick = !resource.isMoving; }, 100);
     }
      hoveredPlanet = null; // Clear hover state when mouse leaves
@@ -1143,7 +1179,6 @@ canvas.addEventListener('wheel', (event) => {
         if (hoveredPlanet.radius !== newRadius) {
             hoveredPlanet.radius = newRadius;
             hoveredPlanet.recalculateMass(); // CRITICAL: Update mass
-            debouncedTriggerPerfMapRegen("Planet resized..."); // Trigger regeneration (debounced)
         }
     }
 });
@@ -1155,23 +1190,18 @@ resetButton.addEventListener('click', () => {
     if (animationFrameId) cancelAnimationFrame(animationFrameId); // Stop current loop
     animationFrameId = null;
 
-    // Stop potential ongoing map generation before reset
-    if (isGeneratingPerfMap) {
-        isGeneratingPerfMap = false; // Signal cancellation
-        perfStatusElement.textContent = 'Resetting trial...';
-        perfStatusElement.style.color = '#ccc';
-    }
-
     needsCursorReset = false; // !!! MANUAL RESET: DO NOT require cursor move !!!
     setup(); // Restart the game setup and loop
 });
+
+generatePlotButton.addEventListener('click', generatePerformancePlot);
+
 
 
 gravitySlider.addEventListener('input', (event) => {
     const newGravity = parseFloat(event.target.value);
     config.gravityConstant = newGravity;
     gravityValueSpan.textContent = newGravity.toFixed(1);
-    debouncedTriggerPerfMapRegen("Gravity changed..."); // Use the debounced trigger
 });
 
 // --- Initialization ---
@@ -1180,6 +1210,12 @@ gravityValueSpan.textContent = config.gravityConstant.toFixed(1);
 
 preloadSounds(); 
 console.log("Game ready. Click 'Start Game' button.");
-drawPerformancePlaceholder("Click Start Game");
-perfStatusElement.textContent = "Waiting for game start...";
-perfStatusElement.style.color = '#ccc';
+redrawPlotWithMarkers(); // Use the new function for initial draw too
+
+// Optionally draw an initial empty state for the plot or prompt user to generate
+perfCtx.fillStyle = '#222';
+perfCtx.fillRect(0, 0, config.perfMapSize, config.perfMapSize);
+perfCtx.fillStyle = '#aaa';
+perfCtx.textAlign = 'center';
+perfCtx.font = '14px sans-serif';
+perfCtx.fillText('Click "Generate" button', config.perfMapSize / 2, config.perfMapSize / 2);
